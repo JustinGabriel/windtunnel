@@ -20,16 +20,39 @@ npm install
 npm start
 ```
 
-The app is at `http://localhost:3000`. Set `PORT` to change the port, `PUBLIC_URL` for
-the address shown in the MCP and API docs, and `WINDTUNNEL_DATA` for where saved
-reports and the waitlist are written (default `./var`).
+The app is at `http://localhost:3000`. Set `PORT` to change the port and `PUBLIC_URL`
+for the address shown in the MCP and API docs.
 
 ```bash
 npm test
 ```
 
-40 tests: the engine against the real dataset, every HTTP route, the MCP server over
+45 tests: the engine against the real dataset, every HTTP route, the MCP server over
 both HTTP and stdio, and the ingest script against fixtures.
+
+## Deploy
+
+**Vercel.** Import the repository at vercel.com/new and deploy; there is nothing to
+configure. `vercel.json` serves `public/` as static files and sends every other path to
+`api/index.js`, which is the whole Express app as one function.
+
+**Anywhere else.** It is a plain Node server: `npm install && npm start`.
+
+The server keeps no report state. A share link carries the pitch itself, compressed
+into the URL, and the report is recomputed when the link is opened. That means links
+keep working across deploys and instances, a shared report always reflects the current
+dataset, and anyone holding a link can read the pitch in it.
+
+Waitlist sign-ups need somewhere durable to go:
+
+| Setting | Behaviour |
+|---|---|
+| `WAITLIST_WEBHOOK_URL` set | Each sign-up is POSTed there as `{ email, plan, at }`. Use this on Vercel. |
+| Not set, long-lived server | Appended to `var/waitlist.jsonl` (`WINDTUNNEL_DATA` changes the directory). |
+| Not set, on Vercel | The form is hidden, because files written there do not persist. |
+
+The rate limit (40 writes a minute per address) is held in memory, so on a serverless
+host it applies per instance rather than globally.
 
 ## Why this product
 
@@ -59,7 +82,7 @@ dropped on the way. An "is your site usable by AI agents" checker already launch
 - **Pitch report** (`/`): conditions for your theme and framing, the closest past
   launches with their votes and day rank, crowding over the last 30 days against the 30
   before, the bar for each weekday, and tagline checks including Product Hunt's
-  60-character limit. Each report gets a shareable link.
+  60-character limit. Each report has a shareable link.
 - **Tagline comparison** (`/compare`): up to four variants side by side. When the model
   cannot separate them it says so and falls back to the clarity checks.
 - **Trends** (`/trends`): votes needed by weekday, every theme and framing pattern with
@@ -132,17 +155,18 @@ waitlist; neither plan is built.
 
 ## Not built
 
-- Payments and accounts. The waitlist stores an email and a plan in `var/waitlist.jsonl`.
-- Scheduled data refresh. `npm run ingest` is manual.
+- Payments and accounts. The waitlist only records an email and a plan.
+- Scheduled data refresh. `npm run ingest` is manual, and the result has to be committed.
 - The paid features listed above.
-- A database. Reports are JSON files under `var/reports/`, which suits one node.
+- A database. Nothing needs one yet: reports are stateless and the waitlist is a file or a webhook.
 
 ## Layout
 
 ```
+api/index.js             Vercel entry point
 bin/windtunnel.js        CLI entry: serve, mcp, test, compare, bar, eval
 src/engine/              text matching, statistics, patterns, model, analysis
-src/server/              Express app, HTML views, file store
+src/server/              Express app, HTML views, share links, waitlist
 src/mcp/server.js        MCP tools
 scripts/ingest.mjs       dataset builder
 data/                    launches.json and the hand back-translations

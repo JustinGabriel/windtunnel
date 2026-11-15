@@ -250,8 +250,7 @@ function streamlines() {
 
 // ---- report ------------------------------------------------------------------------------
 
-export function report(ctx, record, { url }) {
-  const r = record.payload;
+export function report(ctx, r, { url }) {
   const c = r.conditions;
   const over = r.input.tagline.length - TAGLINE_LIMIT;
   const max = Math.max(...r.forecast.map((f) => Math.max(f.high, f.bar[5]))) * 1.05;
@@ -262,7 +261,7 @@ export function report(ctx, record, { url }) {
     noindex: true,
     body: html`
       <section class="report-head">
-        <p class="eyebrow">Launch conditions · ${day(record.createdAt)} · ${num(r.corpus.launches)} launches, ${day(r.corpus.from)} to ${day(r.corpus.to)}</p>
+        <p class="eyebrow">Launch conditions · ${num(r.corpus.launches)} launches, ${day(r.corpus.from)} to ${day(r.corpus.to)}</p>
         <h1>${r.input.name || 'Your launch'}</h1>
         <p class="quote">“${r.input.tagline}” <span class="chip ${over > 0 ? 'warn' : ''}">${r.input.tagline.length}/${TAGLINE_LIMIT}</span></p>
         <div class="actions">
@@ -427,15 +426,14 @@ export function compare(ctx, { prefill = {}, error }) {
   });
 }
 
-export function comparison(ctx, record, { url }) {
-  const r = record.payload;
+export function comparison(ctx, r, { url }) {
   return layout({
     title: 'Tagline comparison',
     active: '/compare',
     noindex: true,
     body: html`
       <section class="report-head">
-        <p class="eyebrow">Tagline comparison · ${day(record.createdAt)}</p>
+        <p class="eyebrow">Tagline comparison · ${num(ctx.corpus.all.length)} launches, ${day(ctx.corpus.meta.from)} to ${day(ctx.corpus.meta.to)}</p>
         <h1>${r.name || 'Your taglines'}, side by side</h1>
         <p class="verdict">${r.verdict}</p>
         <div class="actions">
@@ -728,13 +726,14 @@ windtunnel serve --port 3000</code></pre>
 // ---- pricing -----------------------------------------------------------------------------
 
 export function pricing(ctx, { joined, error } = {}) {
+  const signup = (plan) => (ctx.waitlistOpen ? waitlistForm(plan) : html`<p class="muted">The waitlist is not open on this deployment yet.</p>`);
   return layout({
     title: 'Pricing',
     active: '/pricing',
     body: html`
       <section class="page-head">
         <h1>Free now. Paid when it earns it.</h1>
-        <p class="lede">Everything on this site is free today. The two paid plans below are planned, not built. Join the list and you will hear once, when they open.</p>
+        <p class="lede">Everything on this site is free today. The two paid plans below are planned, not built.${ctx.waitlistOpen ? ' Join the list and you will hear once, when they open.' : ''}</p>
       </section>
       ${joined ? html`<p class="notice" role="status">${joined === 'yes' ? 'You are on the list. One email, when it opens.' : 'You were already on the list.'}</p>` : ''}
       ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
@@ -761,7 +760,7 @@ export function pricing(ctx, { joined, error } = {}) {
             <li>Private reports and saved tagline history</li>
             <li>Data refreshed every day</li>
           </ul>
-          ${waitlistForm('launch')}
+          ${signup('launch')}
         </div>
         <div class="panel plan">
           <h2>Studio</h2>
@@ -773,7 +772,7 @@ export function pricing(ctx, { joined, error } = {}) {
             <li>API without rate limits</li>
             <li>A weekly brief on what moved</li>
           </ul>
-          ${waitlistForm('studio')}
+          ${signup('studio')}
         </div>
       </section>`,
   });
@@ -793,7 +792,7 @@ function waitlistForm(plan) {
 export function notFound() {
   return layout({
     title: 'Not found',
-    body: html`<section class="page-head"><h1>Nothing here</h1><p class="lede">That page or report does not exist. Reports are kept on this server and may have been cleared.</p><p><a class="button primary" href="/">Test a pitch</a></p></section>`,
+    body: html`<section class="page-head"><h1>Nothing here</h1><p class="lede">That page does not exist, or the report link is incomplete. Report links carry the whole pitch, so check that the address was copied in full.</p><p><a class="button primary" href="/">Test a pitch</a></p></section>`,
   });
 }
 

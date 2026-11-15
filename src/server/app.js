@@ -8,20 +8,29 @@ import { analyzePitch, backtest, compareVariants } from '../engine/analyze.js';
 import { loadCorpus, publicDoc } from '../engine/corpus.js';
 import { sharedTerms } from '../engine/text.js';
 import { createMcpServer } from '../mcp/server.js';
-import { createStore } from './store.js';
+import { decodeShare, encodeShare } from './share.js';
+import { createWaitlist } from './store.js';
 import * as views from './views.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /**
- * @param {{corpus?: import('../engine/corpus.js').Corpus, dataDir?: string, rateLimit?: number}} [options]
+ * @param {{corpus?: import('../engine/corpus.js').Corpus, dataDir?: string, rateLimit?: number, waitlist?: object}} [options]
  */
 export function createApp(options = {}) {
   const corpus = options.corpus ?? loadCorpus();
-  const store = createStore(options.dataDir ?? process.env.WINDTUNNEL_DATA ?? join(ROOT, 'var'));
+  const waitlist = options.waitlist ?? createWaitlist({ dir: options.dataDir ?? process.env.WINDTUNNEL_DATA ?? join(ROOT, 'var') });
   const limiter = rateLimiter(options.rateLimit ?? 40);
-  const bt = backtest(corpus); // deterministic, so compute once
-  const ctx = { corpus, backtest: bt };
+  // The backtest is deterministic but takes about a second, so run it on first use:
+  // API and MCP calls on a cold serverless instance should not wait for it.
+  let bt;
+  const ctx = {
+    corpus,
+    waitlistOpen: waitlist.open,
+    get backtest() {
+      return (bt ??= backtest(corpus));
+    },
+  };
 
   const app = express();
   app.disable('x-powered-by');
@@ -49,14 +58,13 @@ export function createApp(options = {}) {
   app.post('/test', limiter, (req, res) => {
     const input = pick(req.body, ['name', 'tagline', 'description']);
     if (!input.tagline?.trim()) return page(res, views.home(ctx, { prefill: input, error: 'Enter a tagline to test.' }), 400);
-    const id = store.save('report', analyzePitch(corpus, input));
-    res.redirect(303, `/r/${id}`);
+    res.redirect(303, `/r/${encodeShare('r', analyzePitch(corpus, input).input)}`);
   });
 
-  app.get('/r/:id', (req, res) => {
-    const record = store.load(req.params.id, 'report');
-    if (!record) return page(res, views.notFound(), 404);
-    page(res, views.report(ctx, record, { url: `${origin(req)}/r/${record.id}` }));
+  app.get('/r/:token', (req, res) => {
+    const input = decodeShare('r', req.params.token);
+    if (!input?.tagline) return page(res, views.notFound(), 404);
+    page(res, views.report(ctx, analyzePitch(corpus, input), { url: `${origin(req)}/r/${req.params.token}` }));
   });
 
   app.get('/compare', (req, res) => page(res, views.compare(ctx, {})));
@@ -65,14 +73,14 @@ export function createApp(options = {}) {
     const taglines = [].concat(req.body?.taglines ?? []).map(String).filter((t) => t.trim());
     const input = { ...pick(req.body, ['name', 'description']), taglines };
     if (taglines.length < 2) return page(res, views.compare(ctx, { prefill: input, error: 'Enter at least two taglines to compare.' }), 400);
-    const id = store.save('comparison', compareVariants(corpus, input));
-    res.redirect(303, `/c/${id}`);
+    const trimmed = { name: (input.name ?? '').slice(0, 80), description: (input.description ?? '').slice(0, 2000), taglines: taglines.slice(0, 8).map((t) => t.trim().slice(0, 300)) };
+    res.redirect(303, `/c/${encodeShare('c', trimmed)}`);
   });
 
-  app.get('/c/:id', (req, res) => {
-    const record = store.load(req.params.id, 'comparison');
-    if (!record) return page(res, views.notFound(), 404);
-    page(res, views.comparison(ctx, record, { url: `${origin(req)}/c/${record.id}` }));
+  app.get('/c/:token', (req, res) => {
+    const input = decodeShare('c', req.params.token);
+    if (!Array.isArray(input?.taglines) || !input.taglines.length) return page(res, views.notFound(), 404);
+    page(res, views.comparison(ctx, compareVariants(corpus, input), { url: `${origin(req)}/c/${req.params.token}` }));
   });
 
   app.get('/trends', (req, res) => page(res, views.trends(ctx)));
@@ -80,14 +88,13 @@ export function createApp(options = {}) {
   app.get('/agents', (req, res) => page(res, views.agents(ctx, { origin: origin(req) })));
   app.get('/pricing', (req, res) => page(res, views.pricing(ctx, { joined: req.query.joined })));
 
-  app.post('/waitlist', limiter, (req, res) => {
+  app.post('/waitlist', limiter, async (req, res) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     const plan = ['launch', 'studio'].includes(req.body?.plan) ? req.body.plan : 'launch';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
       return page(res, views.pricing(ctx, { error: 'That does not look like an email address.' }), 400);
     }
-    const fresh = store.joinWaitlist(email, plan);
-    res.redirect(303, `/pricing?joined=${fresh ? 'yes' : 'already'}`);
+    res.redirect(303, `/pricing?joined=${await waitlist.join(email, plan)}`);
   });
 
   // ---- JSON API -----------------------------------------------------------------------
@@ -119,7 +126,7 @@ export function createApp(options = {}) {
       topLaunches: [...corpus.all].sort((a, b) => b.votes - a.votes).slice(0, 50).map(publicDoc),
     }),
   );
-  api.get('/backtest', (req, res) => res.json(bt));
+  api.get('/backtest', (req, res) => res.json(ctx.backtest));
   api.use((req, res) => res.status(404).json({ error: 'No such endpoint. See /agents for the API.' }));
   app.use('/api', api);
 
@@ -141,7 +148,7 @@ export function createApp(options = {}) {
 
   // ---- machine-readable odds and ends ---------------------------------------------------
 
-  app.get('/healthz', (req, res) => res.json({ ok: true, launches: corpus.all.length, window: [corpus.meta.from, corpus.meta.to], reports: store.count() }));
+  app.get('/healthz', (req, res) => res.json({ ok: true, launches: corpus.all.length, window: [corpus.meta.from, corpus.meta.to], waitlist: waitlist.mode }));
   app.get('/robots.txt', (req, res) => res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /r/\nDisallow: /c/\n`));
   app.get('/llms.txt', (req, res) => res.type('text/plain').send(views.llmsTxt(ctx, origin(req))));
 

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { loadCorpus } from '../src/engine/corpus.js';
 import { createApp } from '../src/server/app.js';
+import { decodeShare, encodeShare } from '../src/server/share.js';
+import { createWaitlist } from '../src/server/store.js';
 
 const corpus = loadCorpus();
 const dataDir = mkdtempSync(join(tmpdir(), 'windtunnel-'));
@@ -50,7 +52,8 @@ test('submitting a pitch saves a shareable report', async () => {
   const res = await fetch(base + '/test', form({ name: 'Relay', tagline: 'Turn website visitors into booked sales calls' }));
   assert.equal(res.status, 303);
   const location = res.headers.get('location');
-  assert.match(location, /^\/r\/[a-z0-9]{10}$/);
+  assert.match(location, /^\/r\/[\w-]+$/);
+  assert.deepEqual(decodeShare('r', location.slice(3)), { name: 'Relay', tagline: 'Turn website visitors into booked sales calls', description: '' });
   const page = await fetch(base + location);
   assert.equal(page.status, 200);
   const body = await page.text();
@@ -80,10 +83,28 @@ test('unknown and malformed report ids are 404s', async () => {
   }
 });
 
-test('a report id cannot be opened as a comparison', async () => {
+test('a report link cannot be opened as a comparison', async () => {
   const res = await fetch(base + '/test', form({ tagline: 'Voice notes for busy founders' }));
-  const id = res.headers.get('location').split('/').pop();
-  assert.equal((await fetch(`${base}/c/${id}`)).status, 404);
+  const token = res.headers.get('location').split('/').pop();
+  assert.equal((await fetch(`${base}/c/${token}`)).status, 404);
+});
+
+test('share links are stateless: any server with the same data renders them', async () => {
+  const token = encodeShare('r', { name: 'Quill', tagline: 'Private, local AI note-taking for your Mac', description: '' });
+  const other = createApp({ corpus, dataDir, rateLimit: 1000 }).listen(0);
+  await new Promise((r) => other.once('listening', r));
+  const res = await fetch(`http://127.0.0.1:${other.address().port}/r/${token}`);
+  other.close();
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /Quill/);
+});
+
+test('share tokens reject junk, the wrong kind and oversized input', () => {
+  assert.equal(decodeShare('r', 'not-a-token'), null);
+  assert.equal(decodeShare('r', '../../etc/passwd'), null);
+  assert.equal(decodeShare('c', encodeShare('r', { tagline: 'x' })), null);
+  assert.equal(decodeShare('r', 'A'.repeat(7000)), null);
+  assert.equal(decodeShare('r', encodeShare('r', { tagline: 'x'.repeat(30_000) })), null);
 });
 
 test('comparison flow', async () => {
@@ -142,9 +163,52 @@ test('waitlist validates, stores and de-duplicates', async () => {
   assert.equal(JSON.parse(lines[0]).plan, 'studio');
 });
 
+test('waitlist can forward sign-ups to a webhook', async () => {
+  const { createServer } = await import('node:http');
+  const received = [];
+  const hook = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      received.push(JSON.parse(body));
+      res.end('ok');
+    });
+  }).listen(0);
+  await new Promise((r) => hook.once('listening', r));
+  const waitlist = createWaitlist({ webhookUrl: `http://127.0.0.1:${hook.address().port}/hook`, serverless: true });
+  assert.equal(waitlist.mode, 'webhook');
+  assert.equal(await waitlist.join('a@b.co', 'launch'), 'yes');
+  hook.close();
+  assert.equal(received.length, 1);
+  assert.deepEqual({ email: received[0].email, plan: received[0].plan }, { email: 'a@b.co', plan: 'launch' });
+});
+
+test('on a serverless host with no webhook the waitlist form is hidden, not lossy', async () => {
+  const waitlist = createWaitlist({ dir: dataDir, webhookUrl: '', serverless: true });
+  assert.equal(waitlist.mode, 'closed');
+  const closed = createApp({ corpus, dataDir, waitlist, rateLimit: 1000 }).listen(0);
+  await new Promise((r) => closed.once('listening', r));
+  const url = `http://127.0.0.1:${closed.address().port}`;
+  const pricing = await (await fetch(`${url}/pricing`)).text();
+  const post = await fetch(`${url}/waitlist`, form({ email: 'a@b.co', plan: 'launch' }));
+  closed.close();
+  assert.doesNotMatch(pricing, /action="\/waitlist"/);
+  assert.match(pricing, /not open on this deployment/);
+  assert.equal(post.status, 503);
+});
+
+test('the Vercel entry point exports the app as a request handler', async () => {
+  const { default: handler } = await import('../api/index.js');
+  assert.equal(typeof handler, 'function');
+  const vercel = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
+  assert.equal(vercel.rewrites[0].destination, '/api');
+  assert.match(vercel.functions['api/index.js'].includeFiles, /launches\.json/);
+});
+
 test('machine-readable endpoints', async () => {
   const health = await (await fetch(base + '/healthz')).json();
   assert.equal(health.ok, true);
+  assert.equal(health.waitlist, 'file');
   assert.match(await (await fetch(base + '/llms.txt')).text(), /\/mcp/);
   assert.match(await (await fetch(base + '/robots.txt')).text(), /Disallow: \/r\//);
 });
