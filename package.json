@@ -1,0 +1,25 @@
+{
+  "name": "windtunnel",
+  "version": "0.1.0",
+  "description": "Test your launch positioning against real Product Hunt outcomes before launch day. Web app, CLI and MCP server.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "windtunnel": "bin/windtunnel.js"
+  },
+  "scripts": {
+    "start": "node bin/windtunnel.js serve",
+    "mcp": "node bin/windtunnel.js mcp",
+    "test": "node --test",
+    "eval": "node bin/windtunnel.js eval",
+    "ingest": "node scripts/ingest.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "express": "^5.2.1",
+    "zod": "^4.6.7"
+  }
+}
