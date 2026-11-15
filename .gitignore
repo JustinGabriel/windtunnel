@@ -3,3 +3,4 @@ node_modules/
 var/
 *.log
 *.tar.gz
+.vercel/
