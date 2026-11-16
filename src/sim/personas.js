@@ -97,6 +97,14 @@ const DEFAULT_BUYERS = [
   { id: 'it_buyer', label: 'IT and procurement lead', brief: 'You approve software purchases at a 400-person company. You ask about security review, single sign-on and what happens to the data when a contract ends.' },
 ];
 
+/** Any persona by id, so a stored panel can be asked again later. */
+export function personaById(id) {
+  const fixed = FIXED.find((p) => p.id === id);
+  if (fixed) return { ...fixed, group: 'fixed' };
+  for (const p of [...Object.values(BUYERS).flat(), ...DEFAULT_BUYERS]) if (p.id === id) return { ...p, group: 'buyer' };
+  return null;
+}
+
 /** Eight fixed respondents plus four buyers that fit the pitch's themes. */
 export function buildPanel(themeIds = [], buyerCount = 4) {
   const buyers = [];

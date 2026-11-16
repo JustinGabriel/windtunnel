@@ -238,6 +238,8 @@ function registerSimTools(server, { sim, visitor, origin, reply }) {
         board: { date: r.board.date, yourPlace: r.board.place, of: r.board.of, basis: `${r.board.fixedAnswered} regular visitors` },
         objections: r.themes,
         respondents: r.respondents.map((p) => ({ who: p.label, group: p.group, opened: p.opened, upvoted: p.upvoted, wouldTry: p.wouldTry, thinksItIs: p.restatement, understood: p.verdict, objection: p.objection, wouldAsk: p.question })),
+        panel_id: r.id,
+        next: 'To answer these visitors as the maker and see who you move, call start_launch_thread with this panel_id.',
         url: link('p', r.id),
         caveat: SIMULATED,
       };
@@ -271,6 +273,66 @@ function registerSimTools(server, { sim, visitor, origin, reply }) {
         caveat: SIMULATED,
       };
       return reply(data, `Simulated buyer agents picked it in ${r.tallies.picked} of ${r.tallies.answered} runs and shortlisted it in ${r.tallies.shortlisted}.`);
+    }),
+  );
+
+  const comments = (s) => s.comments.map((c) => ({ comment: c.n, who: c.who, said: `${c.objection} ${c.question}`, wouldTryBefore: c.wouldTry }));
+
+  server.registerTool(
+    'start_launch_thread',
+    {
+      title: 'Open the comment thread on a simulated launch',
+      description:
+        'Turn a finished audience panel into a comment thread: each simulated visitor\'s hesitation and question becomes a ' +
+        'comment on the launch. Returns the comments for YOU to answer as the maker. Then call post_maker_replies. Pass a ' +
+        'facts sheet to have your claims checked against it. Opening a thread is free. ' +
+        SIMULATED,
+      inputSchema: {
+        panel_id: z.string().min(8).max(32).describe('panel_id from run_audience_panel.'),
+        facts: z.string().max(4000).optional().describe('Ground truth about the product. Claims in your replies are checked against it.'),
+      },
+      annotations: metered,
+    },
+    guarded(async ({ panel_id, facts }) => {
+      const s = await sim.startThread(panel_id, { facts, mode: 'agent' });
+      if (!s) return { isError: true, content: [{ type: 'text', text: 'No panel with that id. Run run_audience_panel first.' }] };
+      return reply({ simulated: true, thread_id: s.id, comments: comments(s), url: link('t', s.id) }, `${s.comments.length} simulated comments are waiting for the maker's replies.`);
+    }),
+  );
+
+  server.registerTool(
+    'post_maker_replies',
+    {
+      title: 'Reply to the simulated comments as the maker',
+      description:
+        'Send the maker\'s replies to a thread opened with start_launch_thread. Each visitor is then asked again whether ' +
+        'their hesitation still stands, once after your reply and once after a placebo reply of the same length that says ' +
+        'nothing, because simulated people soften toward anyone who answers them. Returns both counts, a mark for each ' +
+        'reply, and any claim your facts sheet does not support. Report your reply\'s effect only where it beats the ' +
+        'placebo, and say the result is one simulated run of about twelve people. Counts against the daily run limit. ' +
+        SIMULATED,
+      inputSchema: {
+        thread_id: z.string().min(8).max(32),
+        replies: z
+          .array(z.object({ comment: z.number().int().min(1).max(20).describe('The comment number.'), reply: z.string().min(1).max(500).describe('The maker\'s reply, up to 500 characters.') }))
+          .min(1)
+          .max(20),
+      },
+      annotations: metered,
+    },
+    guarded(async ({ thread_id, replies }) => {
+      const s = await sim.answerThread(thread_id, replies, who);
+      if (!s) return { isError: true, content: [{ type: 'text', text: 'No thread with that id. Open one with start_launch_thread.' }] };
+      const sum = s.summary;
+      const data = {
+        simulated: true,
+        thread_id: s.id,
+        summary: sum,
+        outcomes: s.outcomes.filter((o) => o.reply).map((o) => ({ comment: o.n, handling: o.handling, note: o.note, afterReply: o.afterReply, afterPlacebo: o.afterPlacebo, unsupportedClaims: o.unsupported })),
+        url: link('t', s.id),
+        caveat: SIMULATED,
+      };
+      return reply(data, `Simulated: ${sum.resolved.reply} of ${sum.compared} hesitations resolved after the replies, against ${sum.resolved.placebo} of ${sum.compared} after a placebo that said nothing.`);
     }),
   );
 

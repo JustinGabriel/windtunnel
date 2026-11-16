@@ -3,6 +3,7 @@
 
 import { TAGLINE_LIMIT } from '../engine/patterns.js';
 import { MAX_TURNS } from '../sim/interview.js';
+import { REPLY_CAP } from '../sim/thread.js';
 import { html } from './html.js';
 import { day, kindChip, launchCell, layout, num, pitchForm } from './views.js';
 
@@ -95,7 +96,7 @@ export function panelPage({ sim, panelEval }, { prefill = {}, error } = {}) {
 const VERDICT = { right: ['Got it', 'good'], partly: ['Partly', 'mid'], wrong: ['Misread', 'bad'] };
 const TRY = { yes: 'Would try', maybe: 'Might try', no: 'Would not try' };
 
-export function panelResult(ctx, r, { url }) {
+export function panelResult(ctx, r, { url, threadError, facts = '' }) {
   const t = r.tallies;
   const fixed = r.board.fixedAnswered;
   return layout({
@@ -173,6 +174,27 @@ export function panelResult(ctx, r, { url }) {
             </article>`,
           )}
         </div>
+      </section>
+
+      <section class="panel form-panel" id="thread">
+        <h2 class="form-title">Answer them, and ask again ${kindChip('simulated')}</h2>
+        <p class="section-note">
+          Each visitor’s hesitation and question becomes a comment on your launch. Reply, and each one is asked again whether
+          their hesitation still stands. They are also asked again after a reply of the same length that says nothing, because
+          simulated people soften toward anyone who answers them. Your replies count only where they beat that.
+        </p>
+        <form class="pitch" method="post" action="/p/${r.id}/thread" data-busy="Asking the panel again. About 20 seconds">
+          ${threadError ? html`<p class="error" role="alert">${threadError}</p>` : ''}
+          <div class="field">
+            <label for="thread-facts">Facts sheet <span class="opt">pricing, integrations, limits, data handling, customers. Needed for the stand-in; with your own replies it is what your claims are checked against</span></label>
+            <textarea id="thread-facts" name="facts" rows="5" maxlength="4000" placeholder="$49 a month per seat, 14-day trial.&#10;Integrates with HubSpot and Salesforce.&#10;Data stored in the EU; SOC 2 in progress.">${facts}</textarea>
+          </div>
+          <div class="actions">
+            <button class="primary" type="submit" name="mode" value="stand_in">Let a stand-in answer from these facts</button>
+            <button class="secondary" type="submit" name="mode" value="typed">Write the replies myself</button>
+          </div>
+        </form>
+        <p class="run-note">Your own agent can answer instead: it calls <code>start_launch_thread</code> with panel id <code>${r.id}</code>, then <code>post_maker_replies</code>. <a href="/agents">MCP setup</a></p>
       </section>
 
       <section>
@@ -426,6 +448,120 @@ export function interviewPage(ctx, s, { url, error }) {
           <a class="quiet" href="/buyers?${new URLSearchParams(s.input)}#interview">Start another</a>
         </div>
         <p class="run-note">Simulated by ${s.model} in ${s.usage.calls} calls${done ? '' : ' so far'}, about $${s.usage.usd.toFixed(3)}. <a href="/method#simulated">What simulated results can and cannot tell you</a></p>
+      </section>`,
+  });
+}
+
+// ---- thread ------------------------------------------------------------------------------
+
+const SOURCE = { typed: 'Your reply', stand_in: 'Stand-in, from your facts', agent: 'Your agent' };
+const HESITATION = { resolved: ['Resolved', 'good'], partly: ['Partly resolved', 'mid'], stands: ['Still stands', 'bad'] };
+const REPLY_HANDLING = { answered: ['Answered the question', 'good'], partly: ['Partly answered', 'mid'], evaded: ['Evaded', 'bad'] };
+const TRY_SHORT = { yes: 'would try', maybe: 'might try', no: 'would not try' };
+
+function armLine(label, arm, before) {
+  if (!arm) return html`<p class="arm"><span class="arm-label">${label}</span> <span class="muted">Did not answer.</span></p>`;
+  const [text, tone] = HESITATION[arm.hesitation];
+  return html`<p class="arm">
+    <span class="arm-label">${label}</span>
+    <span class="chip verdict-${tone}">${text}</span>
+    <span class="muted">${TRY_SHORT[before]} → ${TRY_SHORT[arm.wouldTry]}</span><br />
+    <span class="arm-why">${arm.why}</span>
+  </p>`;
+}
+
+export function threadPage(ctx, s, { url, error, drafts = {} }) {
+  const done = s.status === 'done';
+  const sum = s.summary;
+  const who = { typed: 'you', stand_in: 'a stand-in limited to your facts', agent: 'your agent' }[s.mode];
+  return layout({
+    title: `${s.input.name || 'Launch'}: the thread`,
+    active: '/panel',
+    noindex: true,
+    body: html`
+      <section class="report-head">
+        <p class="eyebrow">${kindChip('simulated')} Launch thread · replies by ${who} · ${done ? `${sum.compared} of ${s.comments.length} visitors asked again` : 'waiting for replies'}</p>
+        <h1>${s.input.name || 'Your launch'}</h1>
+        <p class="quote">“${s.input.tagline}”</p>
+        <div class="actions">
+          <button type="button" class="secondary" data-copy="${url}">Copy link to this thread</button>
+          <a class="quiet" href="/p/${s.panelId}">Back to the panel</a>
+        </div>
+      </section>
+
+      ${done
+        ? html`<section class="tiles four">
+              <div class="tile"><p class="tile-label">Hesitations resolved by your reply</p><p class="tile-value">${of(sum.resolved.reply, sum.compared)}</p><p class="tile-note"><strong>${sum.resolved.placebo} of ${sum.compared}</strong> after a reply that said nothing</p></div>
+              <div class="tile"><p class="tile-label">More willing to try it</p><p class="tile-value">${of(sum.moreWilling.reply, sum.compared)}</p><p class="tile-note"><strong>${sum.moreWilling.placebo} of ${sum.compared}</strong> after the placebo; ${sum.lessWilling.reply} became less willing</p></div>
+              <div class="tile"><p class="tile-label">Replies that answered the question</p><p class="tile-value">${sum.graded ? of(sum.handling.answered, sum.replied) : '—'}</p><p class="tile-note">${sum.graded ? html`${sum.handling.partly} partly, ${sum.handling.evaded} evaded` : 'The replies could not be graded this time'}</p></div>
+              <div class="tile"><p class="tile-label">Claims your facts do not support</p><p class="tile-value">${sum.claimsChecked ? sum.unsupportedClaims : '—'}</p><p class="tile-note">${sum.claimsChecked ? 'Checked against your facts sheet' : 'No facts sheet, so claims were not checked'}</p></div>
+            </section>
+            <section class="prose">
+              <p class="section-note">
+                <strong>How to read this.</strong> Every visitor was asked twice: once after your reply, once after a reply of the
+                same length that only thanked them. Simulated people warm to being answered at all, so the second number is the
+                baseline. Where the two are close, the reply did little. This is one run of twelve; a difference of one or two
+                is within the noise.
+              </p>
+            </section>`
+        : ''}
+
+      <section>
+        <h2>${done ? 'Comment by comment' : 'The comments'}</h2>
+        ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
+        ${done
+          ? html`<ol class="thread">
+              ${s.comments.map((c) => {
+                const o = s.outcomes.find((x) => x.n === c.n);
+                return html`<li class="thread-item">
+                  <div class="msg buyer">
+                    <p class="who">${c.who} <span class="chip kind simulated">Simulated comment</span></p>
+                    <p>${c.objection} ${c.question}</p>
+                  </div>
+                  ${o.reply
+                    ? html`<div class="msg seller">
+                          <p class="who">${SOURCE[o.source]} ${o.handling ? html`<span class="chip verdict-${REPLY_HANDLING[o.handling][1]}">${REPLY_HANDLING[o.handling][0]}</span>` : ''}</p>
+                          <p>${o.reply}</p>
+                          ${o.note ? html`<p class="muted">${o.note}</p>` : ''}
+                          ${o.unsupported.length ? html`<p class="unsupported"><strong>Not in your facts sheet:</strong> ${o.unsupported.join(' · ')}</p>` : ''}
+                        </div>
+                        <div class="arms">
+                          ${armLine('After your reply', o.afterReply, c.wouldTry)}
+                          ${armLine('After the placebo', o.afterPlacebo, c.wouldTry)}
+                        </div>`
+                    : html`<p class="muted no-reply">No reply was given, so this visitor was not asked again.</p>`}
+                </li>`;
+              })}
+            </ol>`
+          : s.mode === 'agent'
+            ? html`<ol class="thread">
+                  ${s.comments.map((c) => html`<li class="thread-item"><div class="msg buyer"><p class="who">${c.n}. ${c.who} <span class="chip kind simulated">Simulated comment</span></p><p>${c.objection} ${c.question}</p></div></li>`)}
+                </ol>
+                <p class="notice" role="status">Waiting for your agent’s replies. It sends them with the <code>post_maker_replies</code> tool; reload this page to see the result.</p>`
+            : html`<form method="post" action="/t/${s.id}/replies" data-busy="Asking the panel again. About 20 seconds">
+                <ol class="thread">
+                  ${s.comments.map(
+                    (c) => html`<li class="thread-item">
+                      <div class="msg buyer">
+                        <p class="who">${c.who} <span class="chip kind simulated">Simulated comment</span></p>
+                        <p>${c.objection} ${c.question}</p>
+                      </div>
+                      <div class="field reply-field">
+                        <label for="reply-${c.n}">Your reply <span class="opt">optional; up to ${REPLY_CAP} characters</span></label>
+                        <textarea id="reply-${c.n}" name="reply_${c.n}" rows="3" maxlength="${REPLY_CAP}">${drafts[c.n] ?? ''}</textarea>
+                      </div>
+                    </li>`,
+                  )}
+                </ol>
+                <div class="actions"><button class="primary" type="submit">Post the replies and ask them again</button></div>
+              </form>`}
+      </section>
+
+      <section>
+        <p class="run-note">
+          ${done ? html`Simulated by ${s.model} in ${s.usage.calls} calls${s.usage.failed ? html` (${s.usage.failed} did not answer)` : ''}, about $${s.usage.usd.toFixed(3)}. Kept for 90 days.` : 'Nothing has been run yet for this thread.'}
+          <a href="/method#thread">How the placebo works, and what this cannot tell you</a>
+        </p>
       </section>`,
   });
 }

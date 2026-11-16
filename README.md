@@ -35,7 +35,7 @@ for the address shown in the MCP and API docs.
 npm test
 ```
 
-77 tests: the engine against the real dataset, every HTTP route, the MCP server over
+89 tests: the engine against the real dataset, every HTTP route, the MCP server over
 both HTTP and stdio, the ingest script against fixtures, and the simulated tests
 against a scripted fake model (no key or network needed).
 
@@ -128,6 +128,12 @@ dropped on the way. An "is your site usable by AI agents" checker already launch
   of Product Hunt visitor, four buyers fitted to the pitch) choose what to open and
   upvote, then each reads the launch page and says what they think it is, what stops
   them and what they would ask.
+- **The thread** (from any panel result): each visitor's hesitation and question becomes
+  a comment on your launch. You reply, a stand-in limited to your facts sheet replies,
+  or your own agent replies over MCP. Every visitor is then asked again twice: after the
+  reply, and after a placebo of the same length that says nothing. Simulated people warm
+  to being answered at all, so a reply counts only where it beats the placebo. A grader
+  marks each reply and flags claims your facts do not support.
 - **Buyer agents** (`/buyers`): a selection test (twelve purchasing-agent runs choosing
   from a catalogue of the product and its closest real launches, all rewritten into the
   same neutral form) and an interview (a buyer's agent asks up to five questions; a
@@ -136,9 +142,11 @@ dropped on the way. An "is your site usable by AI agents" checker already launch
 - **MCP server** (`/mcp`, or `npm run mcp` for stdio). Measured tools, which need no
   key: `test_pitch`, `compare_taglines`, `find_comparables`, `launch_day_bar`,
   `launch_trends`. Simulated tools, present when a key is configured:
-  `run_audience_panel`, `run_buyer_agents`, `start_agent_interview`, `reply_to_buyer`.
+  `run_audience_panel`, `run_buyer_agents`, `start_agent_interview`, `reply_to_buyer`,
+  `start_launch_thread`, `post_maker_replies`.
 - **JSON API** (`/api/test`, `/api/compare`, `/api/comparables`, `/api/trends`,
-  `/api/backtest`, `/api/panel`, `/api/buyers`, `/api/interview`) and a **CLI**
+  `/api/backtest`, `/api/panel`, `/api/buyers`, `/api/interview`, `/api/thread`) and a
+  **CLI**
   (`node bin/windtunnel.js test "your tagline"`).
 
 ## Honest limits
@@ -174,7 +182,10 @@ npm run eval:panel -- --set heldout --write
 ```
 
 It shows the eight fixed visitors real days, as names and taglines only, and compares
-their upvotes with the real day rank. Days are split into a tuning set and a held-out
+their upvotes with the real day rank. Held-out days get two more passes: the identical
+prompt again, which measures how much the panel disagrees with itself (the noise any
+later comparison has to clear), and the same board with the first pass's upvote counts
+visible, which measures whether seeing votes moves the ranking toward the real one. Days are split into a tuning set and a held-out
 set; only held-out figures are written to `data/panel-eval.json`, with the prompt's
 hash, and a test fails if the live prompt drifts from the one that was scored. The
 method page shows the result, or says the backtest has not been run. It can only test
@@ -238,6 +249,9 @@ plan is built.
 - Payments and accounts. The waitlist only records an email and a plan.
 - Scheduled data refresh. `npm run ingest` is manual, and the result has to be committed.
 - The paid features listed above.
+- Comparing two versions of a pitch on the same simulated people, and feeding the
+  thread to buyer agents as evidence. Both are designed, and both wait on the backtest:
+  if the panel disagrees with itself too much, their differences would be noise.
 - Testing an agent at a URL. Your agent can sit the interview by calling Windtunnel
   over MCP or the JSON API; Windtunnel does not call out to an agent endpoint you
   supply. Doing that safely needs address pinning and somewhere to hold your agent's

@@ -78,6 +78,22 @@ for (const { slug, facts, ...pitch } of PITCHES) {
   console.log('  gaps:', b.gaps.map((g) => `${g.category} x${g.count} (${g.examples[0]})`).join('; '));
 
   if (facts) {
+    rule(`${pitch.name}: the thread, stand-in replies against a placebo`);
+    started = Date.now();
+    const opened = await sim.startThread(p.id, { facts, mode: 'stand_in' });
+    const t = await sim.answerThread(opened.id, [], who);
+    save(`${slug}-thread`, t);
+    console.log(`${seconds(started)}s, ${t.usage.calls} calls (${t.usage.failed} failed), $${t.usage.usd}`);
+    console.log(`  summary: ${JSON.stringify(t.summary)}`);
+    for (const c of t.comments) {
+      const o = t.outcomes.find((x) => x.n === c.n);
+      console.log(`  [${c.who}] ${c.objection} ${c.question}`);
+      console.log(`     reply (${o.handling}): ${o.reply}`);
+      console.log(`     after reply:   ${o.afterReply ? `${o.afterReply.hesitation}, ${c.wouldTry} -> ${o.afterReply.wouldTry}. ${o.afterReply.why}` : 'no answer'}`);
+      console.log(`     after placebo: ${o.afterPlacebo ? `${o.afterPlacebo.hesitation}, ${c.wouldTry} -> ${o.afterPlacebo.wouldTry}. ${o.afterPlacebo.why}` : 'no answer'}`);
+      if (o.unsupported?.length) console.log(`     unsupported: ${o.unsupported.join(' | ')}`);
+    }
+
     rule(`${pitch.name}: interview rehearsal`);
     started = Date.now();
     let s = await sim.startInterview({ pitch, facts, mode: 'rehearsal' }, who);

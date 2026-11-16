@@ -1439,7 +1439,69 @@ button[disabled] {
   margin-top: 22px;
 }
 
+.thread {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 18px;
+  display: grid;
+  gap: 22px;
+  max-width: 800px;
+}
+
+.thread-item {
+  display: grid;
+  gap: 8px;
+}
+
+.reply-field {
+  margin-left: 40px;
+}
+
+.arms {
+  margin-left: 40px;
+  display: grid;
+  gap: 6px;
+  border-left: 2px solid var(--hairline);
+  padding-left: 14px;
+}
+
+.arm {
+  margin: 0;
+  font-size: 14px;
+}
+
+.arm-label {
+  display: inline-block;
+  min-width: 128px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.arm-why {
+  color: var(--ink-2);
+}
+
+.unsupported {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--bad);
+}
+
+.no-reply {
+  margin-left: 40px;
+}
+
 @media (max-width: 720px) {
+  .reply-field,
+  .arms,
+  .no-reply {
+    margin-left: 16px;
+  }
+
+  .arm-label {
+    display: block;
+  }
+
   .msg.seller {
     margin-left: 16px;
   }

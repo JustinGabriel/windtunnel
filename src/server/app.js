@@ -120,6 +120,49 @@ export function createApp(options = {}) {
     page(res, simViews.panelResult(ctx, result, { url: `${origin(req)}/p/${result.id}` }));
   });
 
+  // The thread: the maker answers a stored panel's comments and the panel is asked again.
+  const repliesOf = (body) =>
+    Object.entries(body ?? {})
+      .filter(([k, v]) => /^reply_\d{1,2}$/.test(k) && typeof v === 'string' && v.trim())
+      .map(([k, v]) => ({ comment: Number(k.slice(6)), reply: v }));
+
+  app.post('/p/:id/thread', limiter, async (req, res) => {
+    const mode = req.body?.mode === 'typed' ? 'typed' : 'stand_in';
+    const facts = typeof req.body?.facts === 'string' ? req.body.facts : '';
+    const panel = sim.status.enabled ? await sim.getPanel(req.params.id) : null;
+    if (!panel) return page(res, views.notFound(), 404);
+    const again = (message, status) => page(res, simViews.panelResult(ctx, panel, { url: `${origin(req)}/p/${panel.id}`, threadError: message, facts }), status);
+    if (mode === 'stand_in' && !facts.trim()) return again('Add a facts sheet: it is the only thing the stand-in may say.', 400);
+    try {
+      let thread = await sim.startThread(panel.id, { facts, mode });
+      if (mode === 'stand_in') thread = await sim.answerThread(thread.id, [], visitor(req));
+      res.redirect(303, `/t/${thread.id}`);
+    } catch (err) {
+      const failure = simFailure(err);
+      if (!failure) throw err;
+      if (err instanceof ModelConfigError) console.error(err);
+      again(failure.message, failure.status);
+    }
+  });
+  app.get('/t/:id', async (req, res) => {
+    const thread = sim.status.enabled ? await sim.getThread(req.params.id) : null;
+    if (!thread) return page(res, views.notFound(), 404);
+    page(res, simViews.threadPage(ctx, thread, { url: `${origin(req)}/t/${thread.id}` }));
+  });
+  app.post('/t/:id/replies', limiter, async (req, res) => {
+    const replies = repliesOf(req.body);
+    try {
+      const thread = await sim.answerThread(req.params.id, replies, visitor(req));
+      if (!thread) return page(res, views.notFound(), 404);
+      res.redirect(303, `/t/${thread.id}`);
+    } catch (err) {
+      const failure = simFailure(err);
+      const thread = failure && sim.status.enabled ? await sim.getThread(req.params.id) : null;
+      if (!thread) throw err;
+      page(res, simViews.threadPage(ctx, thread, { url: `${origin(req)}/t/${thread.id}`, error: failure.message, drafts: Object.fromEntries(replies.map((r) => [r.comment, r.reply])) }), failure.status);
+    }
+  });
+
   app.get('/buyers', (req, res) => page(res, simViews.buyersPage(ctx, { prefill: { ...pitchOf(req.query), ...pick(req.query, ['facts']) } })));
   app.post('/buyers', limiter, async (req, res) => {
     const input = pitchOf(req.body);
@@ -229,6 +272,19 @@ export function createApp(options = {}) {
     const session = await sim.reply(req.params.id, String(req.body?.message ?? ''), visitor(req));
     if (!session) return res.status(404).json({ error: 'No such interview, or it is a rehearsal.' });
     res.json(withUrl(req, 'i', session));
+  });
+  api.post('/thread', limiter, async (req, res) => {
+    const mode = req.body?.mode === 'stand_in' ? 'stand_in' : 'agent';
+    let thread = await sim.startThread(String(req.body?.panel_id ?? ''), { facts: req.body?.facts, mode });
+    if (!thread) return res.status(404).json({ error: 'No such panel. Run /api/panel first and pass its id as panel_id.' });
+    if (mode === 'stand_in') thread = await sim.answerThread(thread.id, [], visitor(req));
+    res.json(withUrl(req, 't', thread));
+  });
+  api.post('/thread/:id/replies', limiter, async (req, res) => {
+    const replies = Array.isArray(req.body?.replies) ? req.body.replies.map((r) => ({ comment: Number(r?.comment), reply: String(r?.reply ?? '') })) : [];
+    const thread = await sim.answerThread(req.params.id, replies, visitor(req));
+    if (!thread) return res.status(404).json({ error: 'No such thread.' });
+    res.json(withUrl(req, 't', thread));
   });
   api.post('/interview/:id/next', limiter, async (req, res) => {
     const session = await sim.rehearsalTurn(req.params.id, visitor(req));

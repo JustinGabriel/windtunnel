@@ -15,10 +15,13 @@ export function createBudget(kv, { dailyUsd = Number(process.env.SIM_DAILY_BUDGE
     visitorRunsPerDay,
 
     /**
-     * @param {{visitor: string, estimateUsd: number, countsAsRun?: boolean}} request
+     * @param {{visitor: string, estimateUsd: number, countsAsRun?: boolean, wholeRunUsd?: number}} request
+     *   wholeRunUsd: for the first step of a multi-step run, the worst case for the
+     *   whole run. The run is refused unless all of it fits under today's cap, so a
+     *   visitor is not left with an interview that cannot finish.
      * @returns {{ok: true, settle: (actualUsd: number) => Promise<void>} | {ok: false, reason: 'daily' | 'visitor'}}
      */
-    async reserve({ visitor, estimateUsd, countsAsRun = true }) {
+    async reserve({ visitor, estimateUsd, countsAsRun = true, wholeRunUsd = estimateUsd }) {
       const visitorKey = `sim:visitor:${day()}:${visitorId(visitor)}`;
       if (countsAsRun) {
         const runs = await kv.add(visitorKey, 1, DAY);
@@ -29,7 +32,7 @@ export function createBudget(kv, { dailyUsd = Number(process.env.SIM_DAILY_BUDGE
       }
       const spendKey = `sim:spend:${day()}`;
       const spent = await kv.add(spendKey, estimateUsd, DAY);
-      if (spent > dailyUsd) {
+      if (spent - estimateUsd + Math.max(estimateUsd, wholeRunUsd) > dailyUsd) {
         await kv.add(spendKey, -estimateUsd, DAY);
         if (countsAsRun) await kv.add(visitorKey, -1, DAY);
         return { ok: false, reason: 'daily' };

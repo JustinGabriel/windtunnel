@@ -5,6 +5,12 @@
 // product shows a board (name and tagline, shuffled per visitor) and say what they
 // would open and upvote. The panel's ranking is then compared with the real one.
 //
+// Held-out days get three passes, all in the same order for each visitor:
+//   1  the blind vote, scored against the real ranking
+//   2  the identical prompt again: how much the panel disagrees with itself
+//   3  the same board with pass 1's upvote counts visible: does seeing votes help?
+// The effect of seeing votes is pass 3 against pass 2; its noise is pass 2 against 1.
+//
 //   node scripts/eval-panel.mjs --set dev                 # while tuning prompts
 //   node scripts/eval-panel.mjs --set heldout --write     # once, after freezing them
 //   node scripts/eval-panel.mjs --set dev --limit 3       # a cheap smoke run
@@ -21,7 +27,7 @@ import { z } from 'zod';
 import { loadCorpus } from '../src/engine/corpus.js';
 import { contentScore } from '../src/engine/model.js';
 import { mean, mulberry32, quantile, spearman } from '../src/engine/stats.js';
-import { blindPromptHash, blindVote, boardEntry, seedOf, shuffle } from '../src/sim/audience.js';
+import { blindPromptHash, blindVote, boardEntry, seedOf, shuffle, wavePromptHash, waveVote } from '../src/sim/audience.js';
 import { MODEL, costOf, createFakeModel, createModel } from '../src/sim/llm.js';
 import { FIXED } from '../src/sim/personas.js';
 
@@ -41,9 +47,9 @@ const sizes = corpus.boardDates(MIN_LAUNCHES).map((d) => corpus.launchesOn(d).le
 if (args.estimate) {
   const perVote = (d) => 420 + corpus.launchesOn(d).reduce((s, l) => s + (l.name.length + l.tagline.length + 8) / 3.6, 0);
   const votes = (set) => split[set].reduce((s, d) => s + FIXED.length * perVote(d), 0);
-  // Held-out days are voted twice (the repeat run) and probed once for name recognition.
-  const input = { dev: votes('dev'), heldout: votes('heldout') * 2 + split.heldout.length * 500 };
-  const calls = { dev: split.dev.length * FIXED.length, heldout: split.heldout.length * (FIXED.length * 2 + 1) };
+  // Held-out days are voted three times and probed once for name recognition.
+  const input = { dev: votes('dev'), heldout: votes('heldout') * 3.1 + split.heldout.length * 500 };
+  const calls = { dev: split.dev.length * FIXED.length, heldout: split.heldout.length * (FIXED.length * 3 + 1) };
   for (const set of ['dev', 'heldout']) {
     const usage = { input: input[set], output: calls[set] * 450 };
     console.log(`${set}: ${split[set].length} days, ${calls[set]} calls, about ${Math.round(usage.input / 1000)}K input and ${Math.round(usage.output / 1000)}K output tokens, roughly $${costOf(usage).toFixed(2)}`);
@@ -79,13 +85,19 @@ const track = (res) => {
   return res;
 };
 
-/** One pass of the eight fixed visitors over a day's board: a score per launch. */
-async function panelScores(entries, date, pass) {
-  const votes = await Promise.all(FIXED.map((persona, i) => blindVote(model, persona, entries, seedOf(`${date}|${pass}`) + i * 7919).then(track)));
+/**
+ * One pass of the eight fixed visitors over a day's board: a score per launch.
+ * Every pass uses the same order for a given visitor, so passes differ only in what
+ * the model does, or in the counts shown when `counts` is given.
+ */
+async function panelScores(entries, date, counts) {
+  const seed = (i) => seedOf(`${date}|order`) + i * 7919;
+  const votes = await Promise.all(FIXED.map((persona, i) => (counts ? waveVote(model, persona, entries, seed(i), counts) : blindVote(model, persona, entries, seed(i))).then(track)));
   const answered = votes.filter((v) => v.ok);
   // Upvotes decide; opens only break ties, as on the product's board.
   const scores = entries.map((e) => answered.filter((v) => v.upvotes.has(e.key)).length + answered.filter((v) => v.opens.has(e.key)).length / 100);
-  return { scores, answered: answered.length };
+  const upvoteCounts = new Map(entries.map((e) => [e.key, answered.filter((v) => v.upvotes.has(e.key)).length]));
+  return { scores, answered: answered.length, votes, upvoteCounts };
 }
 
 const RecogniseSchema = z.object({ recognised: z.array(z.number().int()) });
@@ -108,7 +120,7 @@ for (const date of chosen) {
   const docs = corpus.launchesOn(date);
   const entries = docs.map(boardEntry);
   const real = docs.map((d) => d.votes);
-  const first = await panelScores(entries, date, 1);
+  const first = await panelScores(entries, date);
   const row = {
     date,
     n: docs.length,
@@ -119,8 +131,21 @@ for (const date of chosen) {
     top3: topHits(first.scores, real, 3, seedOf(date)),
   };
   if (set === 'heldout') {
-    const second = await panelScores(entries, date, 2);
+    const second = await panelScores(entries, date);
     row.retest = spearman(first.scores, second.scores);
+    row.second = spearman(second.scores, real);
+    // Of the upvotes each visitor gave the first time, how many they gave again.
+    row.upvotesFirst = 0;
+    row.upvotesRepeated = 0;
+    first.votes.forEach((v, i) => {
+      if (!v.ok || !second.votes[i].ok) return;
+      for (const key of v.upvotes) {
+        row.upvotesFirst++;
+        if (second.votes[i].upvotes.has(key)) row.upvotesRepeated++;
+      }
+    });
+    const third = await panelScores(entries, date, first.upvoteCounts);
+    row.withCounts = spearman(third.scores, real);
     const known = await recognised(entries);
     if (known) {
       const keep = entries.map((e, i) => (known.has(e.key) ? -1 : i)).filter((i) => i >= 0);
@@ -129,7 +154,7 @@ for (const date of chosen) {
     }
   }
   perDay.push(row);
-  console.log(`${date}  n=${String(row.n).padStart(2)}  panel rho=${row.panel.toFixed(2)}  length=${row.taglineLength.toFixed(2)}  model=${row.conditionsModel.toFixed(2)}  top3=${row.top3}/3${row.retest == null ? '' : `  retest=${row.retest.toFixed(2)}`}`);
+  console.log(`${date}  n=${String(row.n).padStart(2)}  panel rho=${row.panel.toFixed(2)}  length=${row.taglineLength.toFixed(2)}  model=${row.conditionsModel.toFixed(2)}  top3=${row.top3}/3${row.retest == null ? '' : `  again=${row.second.toFixed(2)}  self-agreement=${row.retest.toFixed(2)}  with-counts=${row.withCounts.toFixed(2)}`}`);
 }
 
 const summary = summarise(perDay);
@@ -144,6 +169,7 @@ if (args.write) {
   const out = {
     model: MODEL,
     promptHash: blindPromptHash(),
+    wavePromptHash: wavePromptHash(),
     ranAt: new Date().toISOString(),
     design: { minLaunchesPerDay: MIN_LAUNCHES, launchesPerDay: { min: sizes[0], median: sizes[sizes.length >> 1], max: sizes.at(-1) }, visitors: FIXED.length, shown: 'name and tagline' },
     dev: { days: split.dev.length },
@@ -156,20 +182,40 @@ if (args.write) {
 
 function summarise(rows) {
   const rho = rows.map((r) => r.panel);
-  const rand = mulberry32(99);
-  const boot = Array.from({ length: 2000 }, () => mean(rows.map(() => rho[Math.floor(rand() * rho.length)]))).sort((a, b) => a - b);
   const r2 = (x) => Math.round(x * 100) / 100;
+  /** 95% bootstrap interval for a mean over days. */
+  const interval = (values, seed) => {
+    const rand = mulberry32(seed);
+    const means = Array.from({ length: 2000 }, () => mean(values.map(() => values[Math.floor(rand() * values.length)]))).sort((a, b) => a - b);
+    return [r2(quantile(means, 0.025)), r2(quantile(means, 0.975))];
+  };
   const have = (key) => rows.filter((r) => r[key] != null);
   const out = {
     days: rows.length,
     launches: rows.reduce((s, r) => s + r.n, 0),
     visitorsAnswered: r2(mean(rows.map((r) => r.answered / FIXED.length))),
     meanSpearman: r2(mean(rho)),
-    ci: [r2(quantile(boot, 0.025)), r2(quantile(boot, 0.975))],
+    ci: interval(rho, 99),
     top3: { hit: r2(mean(rows.map((r) => r.top3 / 3))), chance: r2(mean(rows.map((r) => 3 / r.n))) },
     baselines: { taglineLength: r2(mean(rows.map((r) => r.taglineLength))), conditionsModel: r2(mean(rows.map((r) => r.conditionsModel))) },
   };
-  if (have('retest').length) out.retest = r2(mean(have('retest').map((r) => r.retest)));
+  if (have('retest').length) {
+    const again = have('retest');
+    out.retest = r2(mean(again.map((r) => r.retest)));
+    const first = again.reduce((s, r) => s + r.upvotesFirst, 0);
+    out.upvotesRepeated = first ? r2(again.reduce((s, r) => s + r.upvotesRepeated, 0) / first) : null;
+    const effect = again.map((r) => r.withCounts - r.second);
+    const noise = again.map((r) => r.second - r.panel);
+    out.withCounts = {
+      meanSpearman: r2(mean(again.map((r) => r.withCounts))),
+      withoutCounts: r2(mean(again.map((r) => r.second))),
+      difference: r2(mean(effect)),
+      differenceCi: interval(effect, 7),
+      // The same subtraction between two passes that saw no counts: what chance alone gives.
+      noise: r2(mean(noise)),
+      noiseCi: interval(noise, 8),
+    };
+  }
   if (have('unrecognised').length) {
     out.unrecognised = { days: have('unrecognised').length, launches: have('unrecognised').reduce((s, r) => s + r.unrecognisedN, 0), meanSpearman: r2(mean(have('unrecognised').map((r) => r.unrecognised))) };
   }

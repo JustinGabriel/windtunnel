@@ -203,7 +203,11 @@ B. Group the objections into two to five themes. Give each a label of at most si
       panelOpens: fixed.filter((r) => r.blind.opens.has(e.key)).length,
       panelUpvotes: fixed.filter((r) => r.blind.upvotes.has(e.key)).length,
     }))
-    .sort((a, b) => b.panelUpvotes - a.panelUpvotes || b.panelOpens - a.panelOpens || (b.realVotes ?? 0) - (a.realVotes ?? 0));
+    // Ties are broken at random (seeded), never by real votes: the table must not
+    // borrow its order from the outcome it is being compared with.
+    .map((e, i, all) => ({ e, tie: tieBreak(seed, all.length)[i] }))
+    .sort((a, b) => b.e.panelUpvotes - a.e.panelUpvotes || b.e.panelOpens - a.e.panelOpens || a.tie - b.tie)
+    .map(({ e }) => e);
   const mine = standing.find((e) => e.isYou);
   const place = 1 + standing.filter((e) => e.panelUpvotes > mine.panelUpvotes || (e.panelUpvotes === mine.panelUpvotes && e.panelOpens > mine.panelOpens)).length;
 
@@ -214,6 +218,8 @@ B. Group the objections into two to five themes. Give each a label of at most si
   return {
     kind: 'panel',
     input,
+    // Enough to put the same people in front of the same board again.
+    setup: { seed, boardDate: board.date, personas: panel.map((p) => p.id) },
     board: { date: board.date, standing, place, of: standing.length, fixedAnswered: fixed.length },
     respondents,
     tallies: {
@@ -234,6 +240,46 @@ B. Group the objections into two to five themes. Give each a label of at most si
     usage: { ...usage, usd: round(costOf(usage), 4) },
     createdAt: new Date().toISOString(),
   };
+}
+
+export const WAVE_SYSTEM = `${BLIND_SYSTEM}
+
+Beside each launch you can see how many upvotes it has so far today. You are free to ignore them.`;
+
+const waveUser = (persona, entries, counts) => `Who you are: ${persona.brief}
+
+Today's board, in the order you happen to see it, with upvotes so far:
+${entries.map((e, i) => `${i + 1}. ${e.name} \u2014 ${e.tagline} (${counts.get(e.key) ?? 0} upvotes)`).join('\n')}
+
+Which launches would you open to read more, and which of those would you upvote? Answer with their numbers. Then give one sentence on what drove your choices.`;
+
+/** Changes whenever the with-counts prompt changes. */
+export function wavePromptHash() {
+  const sample = waveUser({ brief: '{brief}' }, [{ key: 'k', name: '{name}', tagline: '{tagline}' }], new Map([['k', 0]]));
+  return createHash('sha256').update(JSON.stringify([WAVE_SYSTEM, sample, FIXED])).digest('hex').slice(0, 16);
+}
+
+/**
+ * The blind pass again, but with earlier visitors' upvote counts visible. Used by the
+ * backtest to measure whether social proof moves the ranking toward the real one.
+ * Same shuffle as blindVote for a given seed, so the two differ only in the counts.
+ */
+export async function waveVote(model, persona, entries, seed, counts) {
+  const order = shuffle(entries, seed);
+  const res = await model.ask({ tag: 'panel.wave', system: WAVE_SYSTEM, user: waveUser(persona, order, counts), schema: BlindSchema, effort: 'low', maxTokens: 1500 });
+  if (!res.ok) return { ok: false, reason: res.reason, usage: res.usage };
+  const keys = (numbers, cap) =>
+    [...new Set(numbers)]
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= order.length)
+      .slice(0, cap)
+      .map((n) => order[n - 1].key);
+  const upvotes = new Set(keys(res.data.upvotes, 4));
+  return { ok: true, opens: new Set([...keys(res.data.opens, 6), ...upvotes]), upvotes, why: clip(res.data.why, 240), usage: res.usage };
+}
+
+function tieBreak(seed, n) {
+  const rand = mulberry32(seed ^ 0x9e3779b9);
+  return Array.from({ length: n }, () => rand());
 }
 
 export function seedOf(text) {

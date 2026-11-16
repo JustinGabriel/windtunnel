@@ -656,8 +656,17 @@ function panelBacktest(e) {
     <div class="tiles">
       <div class="tile"><p class="tile-label">Panel ranking against the real ranking</p><p class="tile-value">ρ = ${h.meanSpearman.toFixed(2)}</p><p class="tile-note">Mean within-day rank correlation over ${h.days} held-out days, 95% interval ${h.ci[0].toFixed(2)} to ${h.ci[1].toFixed(2)}</p></div>
       <div class="tile"><p class="tile-label">Panel’s top three that were real top three</p><p class="tile-value">${pct(h.top3.hit)}</p><p class="tile-note">Chance on these boards is ${pct(h.top3.chance)}</p></div>
-      <div class="tile"><p class="tile-label">Same panel, run twice</p><p class="tile-value">ρ = ${h.retest.toFixed(2)}</p><p class="tile-note">Agreement between two runs on the same boards: the ceiling set by its own noise</p></div>
+      <div class="tile"><p class="tile-label">The panel against itself</p><p class="tile-value">ρ = ${h.retest.toFixed(2)}</p><p class="tile-note">Two runs of the identical prompt on the same boards. ${h.upvotesRepeated == null ? '' : html`A visitor repeated ${pct(h.upvotesRepeated)} of their own upvotes.`} This is the noise any comparison has to clear.</p></div>
     </div>
+    ${h.withCounts
+      ? html`<p class="section-note">
+          <strong>Does seeing votes help?</strong> A third pass showed each visitor the first pass’s upvote counts. Agreement with the
+          real ranking was ρ = ${h.withCounts.meanSpearman.toFixed(2)} with counts and ${h.withCounts.withoutCounts.toFixed(2)} without, a difference of
+          ${h.withCounts.difference.toFixed(2)} (interval ${h.withCounts.differenceCi[0].toFixed(2)} to ${h.withCounts.differenceCi[1].toFixed(2)}). Two passes that both saw no
+          counts differed by ${h.withCounts.noise.toFixed(2)} (${h.withCounts.noiseCi[0].toFixed(2)} to ${h.withCounts.noiseCi[1].toFixed(2)}), so read the first figure against
+          that.
+        </p>`
+      : ''}
     <div class="table-scroll"><table class="data">
       <thead><tr><th>Ranking a real board by</th><th class="n">Mean within-day ρ</th></tr></thead>
       <tbody>
@@ -730,6 +739,22 @@ export function method({ corpus, backtest, panelEval }) {
           <li>The catalogue for buyer agents is built from launch listings. A real buyer’s agent would read your site, your pricing page and your documentation.</li>
           <li>Runs vary. The same pitch can score a visitor or two differently the next time; the repeat-run figure below shows by how much.</li>
           <li>Twelve respondents is a small panel. Results are given as counts so that nobody reads “58%” into seven of twelve.</li>
+        </ul>
+      </section>
+
+      <section class="prose" id="thread">
+        <h2>The thread, and its placebo ${kindChip('simulated')}</h2>
+        <p>
+          After a panel, each visitor’s hesitation and question becomes a comment on your launch. You reply, or a stand-in
+          limited to your facts sheet does, or your own agent does over MCP. Each visitor then reads the reply to their own
+          comment and says whether the hesitation is resolved, partly resolved or still stands, and whether they would try
+          the product now.
+        </p>
+        <ul>
+          <li><strong>The placebo.</strong> Each visitor is asked the same thing a second time, after a reply of the same length that thanks them and tells them nothing. Simulated people warm to being answered at all. A reply has done something only where it beats the placebo, so the two counts are always shown together.</li>
+          <li><strong>The grade.</strong> One more call marks each reply as answering, partly answering or evading the comment, and lists any claim the facts sheet does not support.</li>
+          <li><strong>What it cannot tell you.</strong> It is one run of at most twelve visitors, and the model’s answers vary from run to run. A difference of one or two visitors between reply and placebo is within the noise. It shows which replies fail to answer the question and which claims you cannot back; it does not show how real commenters will react.</li>
+          <li><strong>Your words are data.</strong> Replies are passed to the model as quoted text, capped at 500 characters, and shown exactly as written with their source.</li>
         </ul>
       </section>
 
@@ -815,16 +840,19 @@ export function agents(ctx, { origin }) {
             <tr><td><code>run_buyer_agents</code></td><td>Simulated. Twelve purchasing-agent runs choosing between the product and real competitors.</td></tr>
             <tr><td><code>start_agent_interview</code></td><td>Simulated. Opens an interview in which the calling agent is the seller. Returns the buyer’s first question.</td></tr>
             <tr><td><code>reply_to_buyer</code></td><td>Simulated. Sends the seller’s answer; returns the next question, or the scorecard at the end.</td></tr>
+            <tr><td><code>start_launch_thread</code></td><td>Simulated. Turns a finished panel into a comment thread for the calling agent to answer as the maker.</td></tr>
+            <tr><td><code>post_maker_replies</code></td><td>Simulated. Sends the replies; returns who moved after each reply and after a placebo, a mark per reply, and unsupported claims.</td></tr>
           </tbody>
         </table>
         <p>${sim
-          ? 'The four simulated tools are switched on here. They take about 20 seconds, or one turn at a time, and count against a daily run limit.'
-          : 'The four simulated tools are not switched on for this deployment, so its MCP server lists only the first five.'}</p>
+          ? 'The six simulated tools are switched on here. They take about 20 seconds, or one turn at a time, and count against a daily run limit.'
+          : 'The six simulated tools are not switched on for this deployment, so its MCP server lists only the first five.'}</p>
         <p>Prompts that work well:</p>
         <ul>
           <li><em>“Draft six taglines for my product, compare them with Windtunnel, show me the closest past launches, then revise the best two.”</em></li>
           <li><em>“Run the Windtunnel audience panel on our launch page copy and rewrite the description to fix whatever people misread.”</em></li>
           <li><em>“You are our sales agent. Start a Windtunnel interview and answer the buyer from this pricing page and these docs only.”</em></li>
+          <li><em>“Run the Windtunnel panel on our launch, open the thread, and answer every comment as our community agent would. Tell me which replies did no better than the placebo.”</em></li>
         </ul>
 
         <h2>JSON API</h2>
@@ -845,7 +873,12 @@ curl -s ${origin}/api/buyers -H 'content-type: application/json' -d '{"tagline":
 
 # Interview with your own agent as the seller
 curl -s ${origin}/api/interview -H 'content-type: application/json' -d '{"tagline":"...","facts":"..."}'
-curl -s ${origin}/api/interview/INTERVIEW_ID/reply -H 'content-type: application/json' -d '{"message":"..."}'</code></pre>
+curl -s ${origin}/api/interview/INTERVIEW_ID/reply -H 'content-type: application/json' -d '{"message":"..."}'
+
+# Answer a panel's comments as the maker
+curl -s ${origin}/api/thread -H 'content-type: application/json' -d '{"panel_id":"PANEL_ID","facts":"..."}'
+curl -s ${origin}/api/thread/THREAD_ID/replies -H 'content-type: application/json' \\
+  -d '{"replies":[{"comment":1,"reply":"..."}]}'</code></pre>
         <p>Write endpoints are limited to 40 requests a minute per address, and simulated runs to a few a day.</p>
 
         <h2>Command line</h2>
@@ -949,7 +982,7 @@ export function llmsTxt({ corpus, sim }, origin) {
 ## For agents
 - MCP endpoint (streamable HTTP, no auth): ${origin}/mcp
 - Measured tools: test_pitch, compare_taglines, find_comparables, launch_day_bar, launch_trends
-- Simulated tools${sim.enabled ? '' : ' (not switched on for this deployment)'}: run_audience_panel, run_buyer_agents, start_agent_interview, reply_to_buyer
+- Simulated tools${sim.enabled ? '' : ' (not switched on for this deployment)'}: run_audience_panel, run_buyer_agents, start_agent_interview, reply_to_buyer, start_launch_thread, post_maker_replies
 - [Setup and API reference](${origin}/agents)
 
 ## JSON API
@@ -960,6 +993,7 @@ export function llmsTxt({ corpus, sim }, origin) {
 - GET ${origin}/api/backtest
 - POST ${origin}/api/panel, ${origin}/api/buyers {"tagline": "...", "name": "...", "description": "..."} (simulated)
 - POST ${origin}/api/interview {"tagline": "...", "facts": "..."} then POST ${origin}/api/interview/{id}/reply {"message": "..."} (simulated)
+- POST ${origin}/api/thread {"panel_id": "...", "facts": "..."} then POST ${origin}/api/thread/{id}/replies {"replies": [{"comment": 1, "reply": "..."}]} (simulated)
 
 ## Pages
 - [Audience panel](${origin}/panel) and [buyer agents](${origin}/buyers): the simulated tests

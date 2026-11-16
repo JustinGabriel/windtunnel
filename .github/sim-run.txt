@@ -1,1 +1,1 @@
-smoke (first live check of the v2 prompts)
+smoke (v2 and thread prompts; the log is committed even on failure)
