@@ -1,1 +1,1 @@
-smoke (v2 and thread prompts; the log is committed even on failure)
+smoke (v2 and thread prompts; the run log is committed as text)

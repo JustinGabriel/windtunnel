@@ -61,13 +61,13 @@ jobs:
           set -o pipefail
           mkdir -p data/runs
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "$(date -u +%FT%TZ) $JOB did not run: the repository secret ANTHROPIC_API_KEY is not set." | tee "data/runs/$JOB.log"
+            echo "$(date -u +%FT%TZ) $JOB did not run: the repository secret ANTHROPIC_API_KEY is not set." | tee "data/runs/$JOB.txt"
             exit 1
           fi
           case "$JOB" in
-            smoke) node scripts/live-smoke.mjs 2>&1 | tee data/runs/smoke.log ;;
-            eval-dev) node scripts/eval-panel.mjs --set dev 2>&1 | tee data/runs/eval-dev.log ;;
-            eval-heldout) node scripts/eval-panel.mjs --set heldout --write 2>&1 | tee data/runs/eval-heldout.log ;;
+            smoke) node scripts/live-smoke.mjs 2>&1 | tee data/runs/smoke.txt ;;
+            eval-dev) node scripts/eval-panel.mjs --set dev 2>&1 | tee data/runs/eval-dev.txt ;;
+            eval-heldout) node scripts/eval-panel.mjs --set heldout --write 2>&1 | tee data/runs/eval-heldout.txt ;;
           esac
       - name: Commit the results
         if: always() && steps.pick.outputs.job != 'none'
