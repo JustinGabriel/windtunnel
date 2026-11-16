@@ -7,30 +7,31 @@ import { TAGLINE_LIMIT } from '../engine/patterns.js';
 import { html, launchUrl, raw } from './html.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const num = (n) => Math.round(n).toLocaleString('en-US');
+export const num = (n) => Math.round(n).toLocaleString('en-US');
 const pct = (x) => `${Math.round(x * 100)}%`;
-const day = (iso) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}`;
+export const day = (iso) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}`;
 const pValue = (p) => (p < 0.01 ? 'p < 0.01' : `p = ${p.toFixed(2)}`);
 
 // ---- layout ------------------------------------------------------------------------------
 
 const NAV = [
   ['/', 'Test a pitch'],
-  ['/compare', 'Compare taglines'],
+  ['/panel', 'Audience panel'],
+  ['/buyers', 'Buyer agents'],
   ['/trends', 'Trends'],
   ['/method', 'Method'],
   ['/agents', 'For agents'],
   ['/pricing', 'Pricing'],
 ];
 
-function layout({ title, description, active, body, noindex = false }) {
+export function layout({ title, description, active, body, noindex = false }) {
   return html`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${title ? `${title} · Windtunnel` : 'Windtunnel: see the conditions before you launch'}</title>
-    <meta name="description" content="${description ?? 'Check a Product Hunt pitch against thousands of real launches: who already shipped it, how they did, and how many votes top five takes on your day.'}" />
+    <title>${title ? `${title} · Windtunnel` : 'Windtunnel: test your launch on the market, on people and on agents'}</title>
+    <meta name="description" content="${description ?? 'Test a Product Hunt launch three ways before launch day: against thousands of real launches, on a simulated audience, and on simulated buyer agents.'}" />
     ${noindex ? html`<meta name="robots" content="noindex" />` : ''}
     <link rel="stylesheet" href="/styles.css" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -50,8 +51,9 @@ function layout({ title, description, active, body, noindex = false }) {
     <footer class="site-footer">
       <div class="wrap">
         <p>
-          Windtunnel is independent and not affiliated with Product Hunt. Figures come from public mirrors of Product Hunt’s
-          API and cover the daily top 30 only. <a href="/method">How it works and where it falls short</a>.
+          Windtunnel is independent and not affiliated with Product Hunt. Measured figures come from public mirrors of
+          Product Hunt’s API and cover the daily top 30 only. Simulated figures come from an AI model playing a role, and are
+          labelled as such. <a href="/method">How it works and where it falls short</a>.
         </p>
       </div>
     </footer>
@@ -108,7 +110,7 @@ function signalChip(direction, p) {
   return html`<span class="chip sig-${direction}" title="Permutation test, ${pValue(p)}"><span aria-hidden="true">${icon}</span> ${text}</span>`;
 }
 
-function launchCell(l) {
+export function launchCell(l) {
   const url = launchUrl(l.url);
   return html`<div class="launch">
     ${url ? html`<a href="${url}" rel="noopener nofollow">${l.name}</a>` : html`<strong>${l.name}</strong>`}
@@ -139,28 +141,40 @@ function rangePlot(f, max) {
   </svg>`;
 }
 
-function pitchForm({ prefill = {}, error }) {
-  return html`<form class="pitch" method="post" action="/test">
+/** What kind of evidence a figure is. Shown beside every test and every result. */
+export function kindChip(kind) {
+  return kind === 'measured'
+    ? html`<span class="chip kind measured" title="Counted from real Product Hunt launches">Measured</span>`
+    : html`<span class="chip kind simulated" title="Produced by an AI model playing a role. Not real people or real buyers.">Simulated</span>`;
+}
+
+export function pitchForm({ prefill = {}, error, action = '/test', button = 'Run the tunnel', busy, aside, facts = false, descriptionHint = 'optional, sharpens the match', idPrefix = '' }) {
+  const id = (name) => `${idPrefix}${name}`;
+  return html`<form class="pitch" method="post" action="${action}" ${busy ? raw(`data-busy="${busy}"`) : ''}>
     ${error ? html`<p class="error" role="alert">${error}</p>` : ''}
     <div class="field">
-      <label for="tagline">Tagline</label>
-      <input id="tagline" name="tagline" required maxlength="300" autocomplete="off" value="${prefill.tagline ?? ''}"
-        placeholder="Turn website traffic into booked meetings" data-count="#tagline-count" data-limit="${TAGLINE_LIMIT}" />
-      <p class="help"><span id="tagline-count" class="count">0</span> / ${TAGLINE_LIMIT} characters, Product Hunt’s limit</p>
-    </div>
-    <div class="row">
-      <div class="field">
-        <label for="name">Product name <span class="opt">optional</span></label>
-        <input id="name" name="name" maxlength="80" autocomplete="off" value="${prefill.name ?? ''}" placeholder="Acme" />
-      </div>
+      <label for="${id('tagline')}">Tagline</label>
+      <input id="${id('tagline')}" class="tagline-input" name="tagline" required maxlength="300" autocomplete="off" value="${prefill.tagline ?? ''}"
+        placeholder="Turn website traffic into booked meetings" data-count="#${id('tagline-count')}" data-limit="${TAGLINE_LIMIT}" />
+      <p class="help"><span id="${id('tagline-count')}" class="count">0</span> / ${TAGLINE_LIMIT} characters, Product Hunt’s limit</p>
     </div>
     <div class="field">
-      <label for="description">What it does <span class="opt">optional, sharpens the match</span></label>
-      <textarea id="description" name="description" rows="3" maxlength="2000" placeholder="Two or three plain sentences about what the product does and who uses it.">${prefill.description ?? ''}</textarea>
+      <label for="${id('name')}">Product name <span class="opt">optional</span></label>
+      <input id="${id('name')}" name="name" maxlength="80" autocomplete="off" value="${prefill.name ?? ''}" placeholder="Acme" />
     </div>
+    <div class="field">
+      <label for="${id('description')}">What it does <span class="opt">${descriptionHint}</span></label>
+      <textarea id="${id('description')}" name="description" rows="3" maxlength="2000" placeholder="Two or three plain sentences about what the product does and who uses it.">${prefill.description ?? ''}</textarea>
+    </div>
+    ${facts
+      ? html`<div class="field">
+          <label for="${id('facts')}">Facts sheet <span class="opt">what your agent is allowed to say: pricing, integrations, limits, data handling, customers</span></label>
+          <textarea id="${id('facts')}" name="facts" rows="6" maxlength="4000" placeholder="$49 a month per seat, 14-day trial.&#10;Integrates with HubSpot and Salesforce.&#10;Data stored in the EU; SOC 2 in progress.">${prefill.facts ?? ''}</textarea>
+        </div>`
+      : ''}
     <div class="actions">
-      <button class="primary" type="submit">Run the tunnel</button>
-      <a class="quiet" href="/compare">or compare several taglines</a>
+      <button class="primary" type="submit">${button}</button>
+      ${aside ?? ''}
     </div>
   </form>`;
 }
@@ -173,7 +187,7 @@ const EXAMPLES = [
   { label: 'An MCP server', name: 'Ledger MCP', tagline: 'Give your coding agent your Stripe data', description: 'An MCP server that lets Claude Code and Cursor query billing, subscriptions and revenue.' },
 ];
 
-export function home({ corpus, backtest }, { prefill, error }) {
+export function home({ corpus, backtest, sim }, { prefill, error }) {
   const tue = corpus.weekdays.find((w) => w.label === 'Tuesday');
   const sat = corpus.weekdays.find((w) => w.label === 'Saturday');
   const best = corpus.themeStats.filter((t) => t.direction === 'tailwind').sort((a, b) => b.lift - a.lift)[0];
@@ -182,15 +196,37 @@ export function home({ corpus, backtest }, { prefill, error }) {
     body: html`
       <section class="hero">
         ${streamlines()}
-        <h1>See the conditions before you launch.</h1>
+        <h1>Test your launch on the market, on people and on agents.</h1>
         <p class="lede">
-          Windtunnel checks your Product Hunt pitch against ${num(corpus.all.length)} real launches from the last 90 days:
-          who already shipped it, how they did, how crowded it is, and how many votes top five takes on your day.
+          Three tests for a Product Hunt launch, before launch day. One is measured from ${num(corpus.all.length)} real
+          launches. Two are simulated, and say so.
         </p>
       </section>
 
-      <section class="panel form-panel" aria-label="Test a pitch">
-        ${pitchForm({ prefill, error })}
+      <section class="tests" aria-label="The three tests">
+        <article class="panel test">
+          <p class="test-kind">${kindChip('measured')}</p>
+          <h2>The market</h2>
+          <p>Who already shipped this, how they did, how crowded it is, and how many votes top five takes on each weekday.</p>
+          <p class="muted">Instant. Start here.</p>
+        </article>
+        <article class="panel test">
+          <p class="test-kind">${kindChip('simulated')}</p>
+          <h2><a href="/panel">The audience</a></h2>
+          <p>Twelve simulated visitors see your launch on a real past board. Who opens it, who upvotes it, what they think it is, what stops them.</p>
+          <p class="muted">${sim.enabled ? 'About 20 seconds.' : 'Not switched on for this deployment.'}</p>
+        </article>
+        <article class="panel test">
+          <p class="test-kind">${kindChip('simulated')}</p>
+          <h2><a href="/buyers">Buyer agents</a></h2>
+          <p>Simulated purchasing agents choose between you and your real competitors, then question your agent the way a buyer’s would.</p>
+          <p class="muted">${sim.enabled ? 'About 20 seconds, or turn by turn.' : 'Not switched on for this deployment.'}</p>
+        </article>
+      </section>
+
+      <section class="panel form-panel" aria-label="Test a pitch against the market">
+        <h2 class="form-title">Start with the market ${kindChip('measured')}</h2>
+        ${pitchForm({ prefill, error, aside: html`<a class="quiet" href="/compare">or compare several taglines</a>` })}
         <p class="examples">
           Try one:
           ${EXAMPLES.map((e) => html`<button type="button" class="link" data-example="${JSON.stringify(e)}">${e.label}</button>`)}
@@ -213,24 +249,23 @@ export function home({ corpus, backtest }, { prefill, error }) {
         <div class="tile">
           <p class="tile-label">How well wording alone predicts votes</p>
           <p class="tile-value">ρ = ${backtest.wordingOnly.leaveOneOutSpearman.toFixed(2)}</p>
-          <p class="tile-note">Close to a coin flip, so we do not sell you a score. <a href="/method">Our backtest</a></p>
+          <p class="tile-note">Close to a coin flip, so we do not sell you a score. <a href="/method">Our backtests</a></p>
         </div>
       </section>
 
       <section class="split">
         <div>
-          <h2>What a report tells you</h2>
+          <h2>Measured and simulated are kept apart</h2>
           <ul class="plain">
-            <li><strong>Who got there first.</strong> The launches closest to yours, what they said, and the votes and day rank they finished with.</li>
-            <li><strong>The weather.</strong> Whether your theme and framing have run above or below average, with sample sizes and significance shown.</li>
-            <li><strong>The bar.</strong> Votes needed for #1, #3, #5 and #10 on each weekday, from every board in the window.</li>
-            <li><strong>The crowd.</strong> How many similar launches shipped in the last 30 days against the 30 before.</li>
-            <li><strong>The basics.</strong> Whether the tagline fits the ${TAGLINE_LIMIT}-character field and says something specific.</li>
+            <li><strong>Measured</strong> means counted from real launches: votes, day ranks, how themes and framings actually did. We publish how little of a launch these explain.</li>
+            <li><strong>Simulated</strong> means an AI model playing a visitor or a buyer’s agent. It is good at telling you what is unclear and what people will ask. It is not a forecast of real behaviour.</li>
+            <li><strong>Every figure carries its label</strong>, and simulated results are given as counts (“7 of 12”), never as percentages of a market.</li>
           </ul>
+          <p><a href="/method">How each test works, and where it falls short</a></p>
         </div>
         <div>
           <h2>Works inside your agent</h2>
-          <p>Windtunnel is also an MCP server. Ask Claude, ChatGPT or Cursor to draft taglines and test them against the data in the same conversation.</p>
+          <p>Windtunnel is also an MCP server. Your agent can draft taglines, test them against the data, run the panel, and sit an interview with a simulated buyer’s agent, all in one conversation.</p>
           <pre><code>{
   "mcpServers": {
     "windtunnel": { "url": "https://your-host/mcp" }
@@ -261,7 +296,7 @@ export function report(ctx, r, { url }) {
     noindex: true,
     body: html`
       <section class="report-head">
-        <p class="eyebrow">Launch conditions · ${num(r.corpus.launches)} launches, ${day(r.corpus.from)} to ${day(r.corpus.to)}</p>
+        <p class="eyebrow">${kindChip('measured')} Launch conditions · ${num(r.corpus.launches)} launches, ${day(r.corpus.from)} to ${day(r.corpus.to)}</p>
         <h1>${r.input.name || 'Your launch'}</h1>
         <p class="quote">“${r.input.tagline}” <span class="chip ${over > 0 ? 'warn' : ''}">${r.input.tagline.length}/${TAGLINE_LIMIT}</span></p>
         <div class="actions">
@@ -386,6 +421,25 @@ export function report(ctx, r, { url }) {
             (k) => html`<li class="${k.pass ? 'pass' : 'fail'}"><span class="mark" aria-hidden="true">${k.pass ? '✓' : '✕'}</span><div><strong>${k.label}</strong><br /><span class="muted">${k.detail}</span></div></li>`,
           )}
         </ul>
+      </section>
+
+      <section>
+        <h2>Go further</h2>
+        <p class="section-note">The figures above are measured from past launches. These two tests are simulated: an AI model plays the audience and the buyer.</p>
+        <div class="tests two">
+          <article class="panel test">
+            <p class="test-kind">${kindChip('simulated')}</p>
+            <h3>Audience panel</h3>
+            <p>Put this pitch on a real past board in front of twelve simulated visitors.</p>
+            <a class="button secondary" href="/panel?${new URLSearchParams(r.input)}">Set up the panel</a>
+          </article>
+          <article class="panel test">
+            <p class="test-kind">${kindChip('simulated')}</p>
+            <h3>Buyer agents</h3>
+            <p>See whether purchasing agents pick this over the launches listed above.</p>
+            <a class="button secondary" href="/buyers?${new URLSearchParams(r.input)}">Set up the buyer test</a>
+          </article>
+        </div>
       </section>`,
   });
 }
@@ -593,7 +647,33 @@ export function trends({ corpus }) {
 
 // ---- method ------------------------------------------------------------------------------
 
-export function method({ corpus, backtest }) {
+function panelBacktest(e) {
+  if (!e) {
+    return html`<p class="notice off" role="status"><strong>Not run yet.</strong> The panel has not been scored against real boards. Until it has, read its ranking as untested and use the panel for what it says about clarity, objections and questions.</p>`;
+  }
+  const h = e.heldOut;
+  return html`
+    <div class="tiles">
+      <div class="tile"><p class="tile-label">Panel ranking against the real ranking</p><p class="tile-value">ρ = ${h.meanSpearman.toFixed(2)}</p><p class="tile-note">Mean within-day rank correlation over ${h.days} held-out days, 95% interval ${h.ci[0].toFixed(2)} to ${h.ci[1].toFixed(2)}</p></div>
+      <div class="tile"><p class="tile-label">Panel’s top three that were real top three</p><p class="tile-value">${pct(h.top3.hit)}</p><p class="tile-note">Chance on these boards is ${pct(h.top3.chance)}</p></div>
+      <div class="tile"><p class="tile-label">Same panel, run twice</p><p class="tile-value">ρ = ${h.retest.toFixed(2)}</p><p class="tile-note">Agreement between two runs on the same boards: the ceiling set by its own noise</p></div>
+    </div>
+    <div class="table-scroll"><table class="data">
+      <thead><tr><th>Ranking a real board by</th><th class="n">Mean within-day ρ</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">The audience panel (${e.model})</th><td class="n">${h.meanSpearman.toFixed(2)}</td></tr>
+        <tr><th scope="row">The panel, only launches the model did not recognise${h.unrecognised ? ` (${h.unrecognised.launches} launches)` : ''}</th><td class="n">${h.unrecognised ? h.unrecognised.meanSpearman.toFixed(2) : '—'}</td></tr>
+        <tr><th scope="row">The measured conditions model</th><td class="n">${h.baselines.conditionsModel.toFixed(2)}</td></tr>
+        <tr><th scope="row">Tagline length alone</th><td class="n">${h.baselines.taglineLength.toFixed(2)}</td></tr>
+      </tbody>
+    </table></div>
+    <p class="section-note">
+      Scored on ${h.launches} launches across ${h.days} days the prompts were never tuned on (${e.dev.days} other days were
+      used for tuning). Run ${day(e.ranAt)} ${e.ranAt.slice(0, 4)}. A test in the code fails if the live panel prompt differs from the one scored here.
+    </p>`;
+}
+
+export function method({ corpus, backtest, panelEval }) {
   const m = backtest.conditionsModel;
   return layout({
     title: 'Method and limits',
@@ -601,7 +681,7 @@ export function method({ corpus, backtest }) {
     body: html`
       <section class="page-head prose">
         <h1>Method, and where it falls short</h1>
-        <p class="lede">Most launch-score tools give you a number and no way to check it. This page is the check.</p>
+        <p class="lede">Most launch tools give you a number and no way to check it. This page is the check, for the measured test and the simulated ones.</p>
       </section>
 
       <section class="prose">
@@ -616,7 +696,7 @@ export function method({ corpus, backtest }) {
       </section>
 
       <section>
-        <h2>Backtest</h2>
+        <h2>Backtest of the measured test ${kindChip('measured')}</h2>
         <div class="tiles">
           <div class="tile"><p class="tile-label">Conditions model, 10-fold cross-validation</p><p class="tile-value">ρ = ${m.crossValidatedSpearman.toFixed(2)}</p><p class="tile-note">Rank correlation with real votes on held-out launches</p></div>
           <div class="tile"><p class="tile-label">Same model, trained on the past only</p><p class="tile-value">ρ = ${m.timeSplitSpearman.toFixed(2)}</p><p class="tile-note">Fitted on the first 60% of the window, tested on the ${m.timeSplitTestN} launches after it</p></div>
@@ -628,6 +708,39 @@ export function method({ corpus, backtest }) {
           <tbody>${backtest.quartiles.map((q) => html`<tr><th scope="row">${q.label}</th><td class="n">${q.n}</td><td class="n">${num(q.medianVotes)}</td><td class="n">${pct(q.top5Rate)}</td></tr>`)}</tbody>
         </table></div>
         <p class="section-note">The best group does better and the worst does worse, but the middle two are not in order. That is how weak the signal is. Actual votes usually land between ×${m.residualP25} and ×${m.residualP75} of the model’s estimate.</p>
+      </section>
+
+      <section class="prose" id="simulated">
+        <h2>The simulated tests ${kindChip('simulated')}</h2>
+        <p>
+          The audience panel and the buyer-agent tests are produced by an AI model (${panelEval?.model ?? 'claude-haiku-5-5'}) playing
+          roles. They are useful for a different job from the measured test: finding what is unclear, what people object to
+          and what they will ask. They are not evidence of what real people or real buyers will do.
+        </p>
+        <ul>
+          <li><strong>Audience panel.</strong> Your launch is placed on a real past board among the launches that competed that day, as a name and a tagline, which is all the board shows. Twelve simulated visitors each choose what to open and upvote without being told which entry is yours; the order is reshuffled for each. A second call shows each visitor your launch page and asks what they think it is, their objection and their question. A final call checks their restatements against your description and groups the objections.</li>
+          <li><strong>Who is on the panel.</strong> Eight fixed kinds of Product Hunt visitor and four buyers chosen from your pitch’s themes. This mix is our assumption, not a measurement of Product Hunt’s audience. Your place on the board uses the fixed eight only, because those are what the backtest covers.</li>
+          <li><strong>Buyer-agent selection.</strong> One call rewrites every entry, yours included, into a neutral sentence and writes four client briefs from the group as a whole. Twelve agent runs (four briefs, three dispositions) each choose from the catalogue in a different order.</li>
+          <li><strong>Agent interview.</strong> A buyer’s agent asks up to five questions. In a rehearsal a stand-in seller answers from your facts sheet only; over MCP your own agent answers. A grader marks each answer and checks claims against the facts sheet.</li>
+        </ul>
+        <h3>Limits of simulated respondents</h3>
+        <ul>
+          <li>They are more agreeable and more articulate than real people. Weigh objections more than approval.</li>
+          <li>The model may recognise well-known products on a board and favour them. The backtest reports the unrecognised launches separately for this reason.</li>
+          <li>The catalogue for buyer agents is built from launch listings. A real buyer’s agent would read your site, your pricing page and your documentation.</li>
+          <li>Runs vary. The same pitch can score a visitor or two differently the next time; the repeat-run figure below shows by how much.</li>
+          <li>Twelve respondents is a small panel. Results are given as counts so that nobody reads “58%” into seven of twelve.</li>
+        </ul>
+      </section>
+
+      <section id="panel-backtest">
+        <h2>Backtest of the audience panel</h2>
+        <p class="section-note">
+          Does the panel rank a board the way real voters did? We showed it real days, as names and taglines only, and compared
+          its upvotes with the real day rank. This tests ordering among launches that made the board. It cannot test whether
+          a launch would have sunk without trace, because those are not in the data.
+        </p>
+        ${panelBacktest(panelEval)}
       </section>
 
       <section class="prose">
@@ -667,6 +780,7 @@ export function method({ corpus, backtest }) {
 // ---- agents ------------------------------------------------------------------------------
 
 export function agents(ctx, { origin }) {
+  const sim = ctx.sim.enabled;
   return layout({
     title: 'For agents: MCP, API and CLI',
     active: '/agents',
@@ -697,9 +811,21 @@ export function agents(ctx, { origin }) {
             <tr><td><code>find_comparables</code></td><td>Past launches similar to a plain-language query, with votes, day rank and links.</td></tr>
             <tr><td><code>launch_day_bar</code></td><td>Votes needed for #1, #3, #5 and #10 on each weekday; optionally where a vote count would have placed.</td></tr>
             <tr><td><code>launch_trends</code></td><td>Measured theme and framing performance, top launches and the backtest.</td></tr>
+            <tr><td><code>run_audience_panel</code></td><td>Simulated. Twelve visitors on a real past board: opens, upvotes, comprehension, objections, questions.</td></tr>
+            <tr><td><code>run_buyer_agents</code></td><td>Simulated. Twelve purchasing-agent runs choosing between the product and real competitors.</td></tr>
+            <tr><td><code>start_agent_interview</code></td><td>Simulated. Opens an interview in which the calling agent is the seller. Returns the buyer’s first question.</td></tr>
+            <tr><td><code>reply_to_buyer</code></td><td>Simulated. Sends the seller’s answer; returns the next question, or the scorecard at the end.</td></tr>
           </tbody>
         </table>
-        <p>A prompt that works well: <em>“Draft six taglines for my product, compare them with Windtunnel, show me the closest past launches, then revise the best two.”</em></p>
+        <p>${sim
+          ? 'The four simulated tools are switched on here. They take about 20 seconds, or one turn at a time, and count against a daily run limit.'
+          : 'The four simulated tools are not switched on for this deployment, so its MCP server lists only the first five.'}</p>
+        <p>Prompts that work well:</p>
+        <ul>
+          <li><em>“Draft six taglines for my product, compare them with Windtunnel, show me the closest past launches, then revise the best two.”</em></li>
+          <li><em>“Run the Windtunnel audience panel on our launch page copy and rewrite the description to fix whatever people misread.”</em></li>
+          <li><em>“You are our sales agent. Start a Windtunnel interview and answer the buyer from this pricing page and these docs only.”</em></li>
+        </ul>
 
         <h2>JSON API</h2>
         <pre><code>curl -s ${origin}/api/test -H 'content-type: application/json' \\
@@ -710,8 +836,17 @@ curl -s ${origin}/api/compare -H 'content-type: application/json' \\
 
 curl -s '${origin}/api/comparables?q=voice+dictation+for+mac&limit=5'
 curl -s ${origin}/api/trends
-curl -s ${origin}/api/backtest</code></pre>
-        <p>Write endpoints are limited to 40 requests a minute per address.</p>
+curl -s ${origin}/api/backtest
+
+# Simulated tests
+curl -s ${origin}/api/panel -H 'content-type: application/json' \\
+  -d '{"name":"Acme","tagline":"Turn website traffic into booked meetings","description":"..."}'
+curl -s ${origin}/api/buyers -H 'content-type: application/json' -d '{"tagline":"...","description":"..."}'
+
+# Interview with your own agent as the seller
+curl -s ${origin}/api/interview -H 'content-type: application/json' -d '{"tagline":"...","facts":"..."}'
+curl -s ${origin}/api/interview/INTERVIEW_ID/reply -H 'content-type: application/json' -d '{"message":"..."}'</code></pre>
+        <p>Write endpoints are limited to 40 requests a minute per address, and simulated runs to a few a day.</p>
 
         <h2>Command line</h2>
         <pre><code>windtunnel test "Turn website traffic into booked meetings" --name Acme
@@ -743,10 +878,12 @@ export function pricing(ctx, { joined, error } = {}) {
           <p class="price">$0</p>
           <p class="muted">Available now</p>
           <ul class="plain">
-            <li>Unlimited pitch reports and comparisons</li>
-            <li>Trends, the weekday bar and the backtest</li>
+            <li>Unlimited market reports and tagline comparisons</li>
+            <li>Trends, the weekday bar and both backtests</li>
+            ${ctx.sim.enabled
+              ? html`<li>Audience panel, buyer-agent test and interview rehearsal: a few runs a day per visitor, within a shared daily budget</li>`
+              : html`<li>Audience panel and buyer-agent tests, where the deployment has them switched on</li>`}
             <li>MCP server, JSON API and CLI</li>
-            <li>Shareable report links</li>
           </ul>
           <a class="button primary" href="/">Test a pitch</a>
         </div>
@@ -755,10 +892,11 @@ export function pricing(ctx, { joined, error } = {}) {
           <p class="price">$39 <span>per launch</span></p>
           <p class="muted">Planned</p>
           <ul class="plain">
-            <li>Watch your space: an alert when a similar product launches before you do</li>
-            <li>Launch-day pace line against the day’s bar, hour by hour</li>
-            <li>Private reports and saved tagline history</li>
-            <li>Data refreshed every day</li>
+            <li>Larger panels, on several past boards at once</li>
+            <li>Your own personas: describe your real customers and put them on the panel</li>
+            <li>Tagline variants run through the panel side by side</li>
+            <li>An alert when a similar product launches before you do</li>
+            <li>Private results and saved history</li>
           </ul>
           ${signup('launch')}
         </div>
@@ -768,9 +906,9 @@ export function pricing(ctx, { joined, error } = {}) {
           <p class="muted">Planned, for agencies and launch consultants</p>
           <ul class="plain">
             <li>Unlimited products and client workspaces</li>
-            <li>White-label reports</li>
-            <li>API without rate limits</li>
-            <li>A weekly brief on what moved</li>
+            <li>Scheduled buyer-agent tests against named competitors</li>
+            <li>Interviews of your production agent on a schedule, with regressions flagged</li>
+            <li>White-label reports and an API without run limits</li>
           </ul>
           ${signup('studio')}
         </div>
@@ -803,14 +941,15 @@ export function errorPage(message) {
   });
 }
 
-export function llmsTxt({ corpus }, origin) {
+export function llmsTxt({ corpus, sim }, origin) {
   return `# Windtunnel
 
-> Launch intelligence for Product Hunt. Checks a pitch against ${corpus.all.length} real launches (${corpus.meta.from} to ${corpus.meta.to}) and reports conditions and evidence, not a forecast.
+> Tests a Product Hunt launch three ways. Measured: a pitch against ${corpus.all.length} real launches (${corpus.meta.from} to ${corpus.meta.to}). Simulated: an audience panel on a real past board, and buyer agents choosing between the product and real competitors or interviewing its agent. Simulated output is labelled and is not a forecast.
 
 ## For agents
 - MCP endpoint (streamable HTTP, no auth): ${origin}/mcp
-- Tools: test_pitch, compare_taglines, find_comparables, launch_day_bar, launch_trends
+- Measured tools: test_pitch, compare_taglines, find_comparables, launch_day_bar, launch_trends
+- Simulated tools${sim.enabled ? '' : ' (not switched on for this deployment)'}: run_audience_panel, run_buyer_agents, start_agent_interview, reply_to_buyer
 - [Setup and API reference](${origin}/agents)
 
 ## JSON API
@@ -819,8 +958,11 @@ export function llmsTxt({ corpus }, origin) {
 - GET ${origin}/api/comparables?q=...&limit=10
 - GET ${origin}/api/trends
 - GET ${origin}/api/backtest
+- POST ${origin}/api/panel, ${origin}/api/buyers {"tagline": "...", "name": "...", "description": "..."} (simulated)
+- POST ${origin}/api/interview {"tagline": "...", "facts": "..."} then POST ${origin}/api/interview/{id}/reply {"message": "..."} (simulated)
 
 ## Pages
+- [Audience panel](${origin}/panel) and [buyer agents](${origin}/buyers): the simulated tests
 - [Trends](${origin}/trends): votes needed by weekday, theme and framing performance
 - [Method and limits](${origin}/method): data sources, backtest, caveats
 `;

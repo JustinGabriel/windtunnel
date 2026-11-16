@@ -7,18 +7,32 @@ import { z } from 'zod';
 import { analyzePitch, backtest, compareVariants } from '../engine/analyze.js';
 import { publicDoc } from '../engine/corpus.js';
 import { sharedTerms } from '../engine/text.js';
+import { MAX_TURNS } from '../sim/interview.js';
+import { ModelConfigError } from '../sim/llm.js';
 
 const CAVEAT =
   'Based on the daily top 30 only, with end-of-day votes. Category, framing and weekday explain a small part of launch outcomes; present this as conditions and evidence, never as a prediction.';
 
-export function createMcpServer(corpus, { version = '0.1.0' } = {}) {
+const SIMULATED =
+  'SIMULATED: produced by an AI model playing a role, not by real people or real buyers. Useful for finding what is unclear and what will be asked; not a forecast. Report counts as given ("7 of 12") and always say the result is simulated.';
+
+/**
+ * @param {object} corpus
+ * @param {{version?: string, sim?: object, visitor?: string, origin?: string}} [options]
+ *   sim adds the simulated tests when it is enabled; visitor keys the spend limits.
+ */
+export function createMcpServer(corpus, { version = '0.2.0', sim, visitor = 'mcp', origin = '' } = {}) {
   const server = new McpServer(
     { name: 'windtunnel', version },
     {
       instructions:
         `Windtunnel answers questions about launching on Product Hunt from ${corpus.all.length} real launches ` +
         `(${corpus.meta.from} to ${corpus.meta.to}). Typical loop: draft taglines, call compare_taglines, read the ` +
-        `comparables, revise, then test_pitch on the winner. ${CAVEAT}`,
+        `comparables, revise, then test_pitch on the winner. ${CAVEAT}` +
+        (sim?.status.enabled
+          ? ` It can also run simulated tests: run_audience_panel, run_buyer_agents, and an interview in which you answer a ` +
+            `simulated buyer's agent (start_agent_interview, then reply_to_buyer until it finishes). ${SIMULATED}`
+          : ''),
     },
   );
   const readOnly = { readOnlyHint: true, openWorldHint: false };
@@ -178,7 +192,135 @@ export function createMcpServer(corpus, { version = '0.1.0' } = {}) {
     },
   );
 
+  if (sim?.status.enabled) registerSimTools(server, { sim, visitor, origin, reply });
   return server;
+}
+
+function registerSimTools(server, { sim, visitor, origin, reply }) {
+  const metered = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+  const who = { visitor };
+  const link = (path, id) => (origin ? `${origin}/${path}/${id}` : null);
+  const pitchShape = {
+    tagline: z.string().min(3).max(300).describe('The one-line tagline.'),
+    name: z.string().max(80).optional().describe('Product name.'),
+    description: z.string().max(2000).optional().describe('What the product does, as on the launch page.'),
+  };
+  // Limits, availability and bad input come back as tool errors the agent can read.
+  const guarded = (fn) => async (args) => {
+    try {
+      return await fn(args);
+    } catch (err) {
+      if (err instanceof ModelConfigError) return { isError: true, content: [{ type: 'text', text: 'Simulations are misconfigured on this server.' }] };
+      if (err.status || err.message === 'A tagline is required.') return { isError: true, content: [{ type: 'text', text: err.message }] };
+      throw err;
+    }
+  };
+
+  server.registerTool(
+    'run_audience_panel',
+    {
+      title: 'Run the simulated audience panel',
+      description:
+        'Put a launch in front of twelve simulated Product Hunt visitors on a real past board, without telling them which ' +
+        'entry is under test, then ask each about the launch page. Returns how many opened and upvoted it, where it placed ' +
+        'on that board, whether each understood what the product is, grouped objections, and the questions they would ask. ' +
+        'Takes about 20 seconds and counts against a daily run limit. ' +
+        SIMULATED,
+      inputSchema: pitchShape,
+      annotations: metered,
+    },
+    guarded(async (args) => {
+      const r = await sim.panel(args, who);
+      const t = r.tallies;
+      const data = {
+        simulated: true,
+        tallies: t,
+        board: { date: r.board.date, yourPlace: r.board.place, of: r.board.of, basis: `${r.board.fixedAnswered} regular visitors` },
+        objections: r.themes,
+        respondents: r.respondents.map((p) => ({ who: p.label, group: p.group, opened: p.opened, upvoted: p.upvoted, wouldTry: p.wouldTry, thinksItIs: p.restatement, understood: p.verdict, objection: p.objection, wouldAsk: p.question })),
+        url: link('p', r.id),
+        caveat: SIMULATED,
+      };
+      return reply(data, `Simulated panel: ${t.opened} of ${t.answeredBoard} opened it, ${t.upvoted} upvoted it, ${t.understood} of ${t.judged} understood what it is.`);
+    }),
+  );
+
+  server.registerTool(
+    'run_buyer_agents',
+    {
+      title: 'Run the simulated buyer-agent selection test',
+      description:
+        'Twelve simulated purchasing agents (four client briefs, three dispositions) each choose from a catalogue of this ' +
+        'product and its closest real Product Hunt launches, all rewritten into the same neutral form. Returns how often ' +
+        'the product was picked and shortlisted, who won instead, why agents passed on it, and what information they could ' +
+        'not find. Takes about 20 seconds and counts against a daily run limit. ' +
+        SIMULATED,
+      inputSchema: pitchShape,
+      annotations: metered,
+    },
+    guarded(async (args) => {
+      const r = await sim.buyers(args, who);
+      const data = {
+        simulated: true,
+        tallies: r.tallies,
+        howAgentsSawYou: r.yourSummary,
+        standing: r.standing.map((e) => ({ name: e.name, isYou: e.isYou, picked: e.picked, shortlisted: e.shortlisted, realVotes: e.realVotes })),
+        whyAgentsPassed: r.whyNot,
+        missingInformation: r.gaps,
+        url: link('b', r.id),
+        caveat: SIMULATED,
+      };
+      return reply(data, `Simulated buyer agents picked it in ${r.tallies.picked} of ${r.tallies.answered} runs and shortlisted it in ${r.tallies.shortlisted}.`);
+    }),
+  );
+
+  const turn = (s) => {
+    const answers = s.transcript.filter((m) => m.role === 'seller').length;
+    return s.status === 'done'
+      ? { simulated: true, interview_id: s.id, finished: true, closing_message: s.transcript.at(-1).role === 'buyer' ? s.transcript.at(-1).text : null, scorecard: s.scorecard, url: link('i', s.id), caveat: SIMULATED }
+      : { simulated: true, interview_id: s.id, finished: false, buyer_message: s.transcript.at(-1).text, turns_left: MAX_TURNS - answers, url: link('i', s.id) };
+  };
+
+  server.registerTool(
+    'start_agent_interview',
+    {
+      title: 'Start an interview with a simulated buyer agent',
+      description:
+        'Begin an interview in which YOU answer as the vendor\'s agent and a simulated purchasing agent asks the questions ' +
+        `(at most ${MAX_TURNS}). Returns the buyer's client brief, its first question and an interview_id. Answer each ` +
+        'buyer message by calling reply_to_buyer; when the interview finishes you get a scorecard: how each answer was ' +
+        'handled, any claim the facts sheet does not support, and whether the buyer would shortlist the product. Pass a ' +
+        'facts sheet if you want claims checked against it. ' +
+        SIMULATED,
+      inputSchema: { ...pitchShape, facts: z.string().max(4000).optional().describe('Ground truth about the product (pricing, integrations, limits, data handling). Vendor claims are checked against it.') },
+      annotations: metered,
+    },
+    guarded(async ({ facts, ...pitch }) => {
+      const s = await sim.startInterview({ pitch, facts, mode: 'external' }, who);
+      return reply({ ...turn(s), client: s.client }, `The buyer's agent asks: ${s.transcript.at(-1).text}`);
+    }),
+  );
+
+  server.registerTool(
+    'reply_to_buyer',
+    {
+      title: 'Answer the simulated buyer agent',
+      description:
+        'Send the vendor agent\'s answer to the buyer\'s last message in an interview started with start_agent_interview. ' +
+        'Returns the buyer\'s next message, or the scorecard when the interview is finished.',
+      inputSchema: {
+        interview_id: z.string().min(8).max(32).describe('From start_agent_interview.'),
+        message: z.string().min(1).max(1200).describe('The vendor agent\'s answer.'),
+      },
+      annotations: metered,
+    },
+    guarded(async ({ interview_id, message }) => {
+      const s = await sim.reply(interview_id, message, who);
+      if (!s) return { isError: true, content: [{ type: 'text', text: 'No interview with that id is open. Start one with start_agent_interview.' }] };
+      const data = turn(s);
+      return reply(data, data.finished ? `Interview finished. The buyer ${{ yes: 'would', maybe: 'might', no: 'would not' }[s.scorecard.wouldShortlist]} shortlist the product. ${s.scorecard.verdict}` : `The buyer's agent asks: ${data.buyer_message}`);
+    }),
+  );
 }
 
 function pct(x) {

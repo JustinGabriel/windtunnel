@@ -39,7 +39,10 @@ switch (command) {
 
   case 'mcp': {
     // stdout belongs to the protocol; say nothing on it.
-    await createMcpServer(loadCorpus()).connect(new StdioServerTransport());
+    const { createSim } = await import('../src/sim/index.js');
+    const corpus = loadCorpus();
+    // With ANTHROPIC_API_KEY set, the simulated tests are available too; state is in memory.
+    await createMcpServer(corpus, { sim: createSim({ corpus }) }).connect(new StdioServerTransport());
     break;
   }
 

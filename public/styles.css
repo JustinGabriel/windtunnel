@@ -302,7 +302,7 @@ textarea {
   padding: 10px 12px;
 }
 
-#tagline {
+.tagline-input {
   font-size: 19px;
   padding: 13px 14px;
 }
@@ -1119,7 +1119,339 @@ summary {
   color: var(--ink);
 }
 
+/* ---- three tests, simulated results ---- */
+
+.tests {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+  margin: 28px 0;
+}
+
+.tests.two {
+  margin: 16px 0 0;
+}
+
+.test {
+  padding: 20px;
+}
+
+.test h2,
+.test h3 {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.test h2 a {
+  color: var(--ink);
+}
+
+.test p {
+  color: var(--ink-2);
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.test p.muted {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.test .button {
+  margin-top: 8px;
+}
+
+.test-kind {
+  margin-bottom: 10px;
+}
+
+.form-title {
+  font-size: 18px;
+  margin-bottom: 14px;
+}
+
+.form-panel + .form-panel {
+  margin-top: 20px;
+}
+
+.form-panel .section-note {
+  margin-bottom: 18px;
+}
+
+.chip.kind {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.chip.kind.measured {
+  background: var(--accent-wash);
+  border-color: transparent;
+}
+
+/* Dashed outline: present on every simulated figure, never mistaken for data. */
+.chip.kind.simulated {
+  background: transparent;
+  border: 1px dashed var(--muted);
+}
+
+h2 .chip.kind {
+  margin-left: 6px;
+}
+
+.tiles.four {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.of-total {
+  font-size: 0.5em;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.dotcell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dots circle {
+  fill: var(--neutral-band);
+}
+
+.dots circle.on {
+  fill: var(--accent);
+}
+
+.themes,
+.reasons {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: grid;
+  gap: 0;
+}
+
+.themes li {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.theme-count {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.reasons li {
+  padding: 8px 0 8px 18px;
+  border-bottom: 1px solid var(--hairline);
+  position: relative;
+  color: var(--ink-2);
+  max-width: 78ch;
+}
+
+.reasons li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 17px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--baseline);
+}
+
+.conditions .reasons {
+  margin: 0 0 16px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.card {
+  padding: 18px;
+}
+
+.card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.card-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.flag {
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  color: var(--ink-2);
+}
+
+.flag.yes {
+  background: var(--accent-wash);
+  border-color: transparent;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.flag.no {
+  color: var(--muted);
+}
+
+.card dl {
+  margin: 0;
+  font-size: 14px;
+}
+
+.card dt {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card dd {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+}
+
+.chip.verdict-good {
+  color: var(--good);
+}
+
+.chip.verdict-bad {
+  color: var(--bad);
+}
+
+.chip.verdict-mid {
+  color: var(--warn-ink);
+}
+
+.quote.neutral {
+  border-left: 3px solid var(--baseline);
+  padding-left: 14px;
+  font-size: 18px;
+  color: var(--ink);
+  max-width: 70ch;
+}
+
+.client {
+  color: var(--ink-2);
+  max-width: 80ch;
+  font-size: 15px;
+}
+
+.transcript {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 18px;
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.msg {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  background: var(--surface);
+}
+
+.msg.seller {
+  margin-left: 40px;
+  background: var(--accent-wash);
+  border-color: transparent;
+}
+
+.msg.buyer {
+  margin-right: 40px;
+}
+
+.msg p {
+  margin: 0;
+}
+
+.msg .who {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.msg .muted {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.hero-figure.small {
+  font-size: 34px;
+}
+
+.run-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 16px 0 0;
+}
+
+.notice.off {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+}
+
+.notice.off a {
+  color: inherit;
+}
+
+form.inline {
+  display: inline;
+}
+
+button[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.prose h3 {
+  margin-top: 22px;
+}
+
 @media (max-width: 720px) {
+  .msg.seller {
+    margin-left: 16px;
+  }
+
+  .msg.buyer {
+    margin-right: 16px;
+  }
+
+  .themes li {
+    grid-template-columns: 76px 1fr;
+  }
+
   .conditions,
   .variant {
     grid-template-columns: 1fr;

@@ -1,9 +1,17 @@
 # Windtunnel
 
-See the conditions before you launch. Windtunnel checks a Product Hunt pitch against
-2,730 real launches and reports who already shipped it, how they did, how crowded the
-space is, and how many votes top five takes on each weekday. It runs as a web app, a
-JSON API, a CLI and an MCP server.
+Test a Product Hunt launch three ways before launch day. It runs as a web app, a JSON
+API, a CLI and an MCP server.
+
+| Test | Kind | What it tells you |
+|---|---|---|
+| The market | Measured | Against 2,730 real launches: who already shipped it, how they did, how crowded the space is, and how many votes top five takes on each weekday. |
+| The audience | Simulated | Twelve simulated visitors see the launch on a real past board, without knowing which entry is under test: who opens it, who upvotes it, what they think it is, what stops them. |
+| Buyer agents | Simulated | Simulated purchasing agents choose between the product and its real competitors, and interview the product's agent the way a buyer's agent would. |
+
+Measured means counted from real launches. Simulated means an AI model playing a role;
+every simulated figure is labelled, and given as a count ("7 of 12") rather than a
+percentage.
 
 It does not give you a launch score. We tested whether a pitch can predict votes; it
 mostly cannot, and the product is built around that result (see [Honest limits](#honest-limits)).
@@ -27,8 +35,17 @@ for the address shown in the MCP and API docs.
 npm test
 ```
 
-45 tests: the engine against the real dataset, every HTTP route, the MCP server over
-both HTTP and stdio, and the ingest script against fixtures.
+77 tests: the engine against the real dataset, every HTTP route, the MCP server over
+both HTTP and stdio, the ingest script against fixtures, and the simulated tests
+against a scripted fake model (no key or network needed).
+
+The measured test needs nothing else. The simulated tests need a model key:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... npm start
+```
+
+Without a key the simulated pages say they are switched off and everything else works.
 
 ## Deploy
 
@@ -38,10 +55,28 @@ configure. `vercel.json` serves `public/` as static files and sends every other 
 
 **Anywhere else.** It is a plain Node server: `npm install && npm start`.
 
-The server keeps no report state. A share link carries the pitch itself, compressed
-into the URL, and the report is recomputed when the link is opened. That means links
-keep working across deploys and instances, a shared report always reflects the current
-dataset, and anyone holding a link can read the pitch in it.
+Measured reports keep no server state. A share link carries the pitch itself,
+compressed into the URL, and the report is recomputed when the link is opened. That
+means links keep working across deploys and instances, a shared report always reflects
+the current dataset, and anyone holding a link can read the pitch in it.
+
+### Switching on the simulated tests
+
+| Setting | What it does |
+|---|---|
+| `ANTHROPIC_API_KEY` | Required. The simulations run on `claude-haiku-5-5`. Use a key from a dedicated workspace with a monthly spend limit: that limit is the hard backstop. |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL`, `KV_REST_API_TOKEN`) | Required on Vercel. Holds the spend counters, stored results and interviews in progress. Add Upstash Redis from Vercel's storage integrations and these are set for you. |
+| `SIM_DAILY_BUDGET_USD` | The app's own daily cap across all visitors. Default 5. |
+| `SIM_VISITOR_RUNS_PER_DAY` | Runs per visitor per day. Default 8. |
+
+On Vercel with no Redis, the simulated tests stay **off** rather than run without a
+cap: serverless instances share no memory, so a cap held in one of them is not a cap.
+On a single long-lived server the same state is kept in files under `var/sim/`.
+
+A full panel is about 25 model calls and a buyer test about 13; each is a few cents at
+most on this model. A run reserves its worst-case cost before it starts and settles to
+the real figure afterwards, so concurrent runs cannot jointly overshoot the daily cap.
+Results are stored for 90 days under a short id.
 
 Waitlist sign-ups need somewhere durable to go:
 
@@ -88,11 +123,23 @@ dropped on the way. An "is your site usable by AI agents" checker already launch
 - **Trends** (`/trends`): votes needed by weekday, every theme and framing pattern with
   sample size and a permutation-test p-value, and the top 25 launches.
 - **Method** (`/method`): data sources, how each number is computed, the backtest.
-- **MCP server** (`/mcp`, or `npm run mcp` for stdio): `test_pitch`,
-  `compare_taglines`, `find_comparables`, `launch_day_bar`, `launch_trends`. The user's
-  own agent drafts the copy; Windtunnel supplies the evidence. No model API key needed.
+- **Audience panel** (`/panel`): the pitch on a real past board, shown as a name and a
+  tagline among that day's real launches. Twelve simulated visitors (eight fixed kinds
+  of Product Hunt visitor, four buyers fitted to the pitch) choose what to open and
+  upvote, then each reads the launch page and says what they think it is, what stops
+  them and what they would ask.
+- **Buyer agents** (`/buyers`): a selection test (twelve purchasing-agent runs choosing
+  from a catalogue of the product and its closest real launches, all rewritten into the
+  same neutral form) and an interview (a buyer's agent asks up to five questions; a
+  stand-in answers from your facts sheet, or your own agent answers over MCP; a grader
+  marks each answer).
+- **MCP server** (`/mcp`, or `npm run mcp` for stdio). Measured tools, which need no
+  key: `test_pitch`, `compare_taglines`, `find_comparables`, `launch_day_bar`,
+  `launch_trends`. Simulated tools, present when a key is configured:
+  `run_audience_panel`, `run_buyer_agents`, `start_agent_interview`, `reply_to_buyer`.
 - **JSON API** (`/api/test`, `/api/compare`, `/api/comparables`, `/api/trends`,
-  `/api/backtest`) and a **CLI** (`node bin/windtunnel.js test "your tagline"`).
+  `/api/backtest`, `/api/panel`, `/api/buyers`, `/api/interview`) and a **CLI**
+  (`node bin/windtunnel.js test "your tagline"`).
 
 ## Honest limits
 
@@ -107,6 +154,36 @@ dropped on the way. An "is your site usable by AI agents" checker already launch
 Zero is a coin flip. Most of what decides a launch (the maker's audience, the hunter,
 the product) is not in the text. So the report shows conditions as a five-step read
 with the backtest figure beside it, and never a point prediction on its own.
+
+### The simulated tests
+
+Simulated respondents are not customers. They are more agreeable and more articulate
+than real people, the model may recognise well-known products and favour them, and
+twelve is a small panel. They are useful for finding what is unclear, what people
+object to and what they will ask.
+
+Whether the panel ranks a board the way real voters did is a measurable question, so
+there is a backtest for it:
+
+```bash
+npm run eval:panel -- --estimate
+```
+
+```bash
+npm run eval:panel -- --set heldout --write
+```
+
+It shows the eight fixed visitors real days, as names and taglines only, and compares
+their upvotes with the real day rank. Days are split into a tuning set and a held-out
+set; only held-out figures are written to `data/panel-eval.json`, with the prompt's
+hash, and a test fails if the live prompt drifts from the one that was scored. The
+method page shows the result, or says the backtest has not been run. It can only test
+ordering among launches that made the board, not whether a launch would have sunk.
+
+`.github/workflows/simulations.yml` runs the backtest and a live smoke test in GitHub
+Actions with a repository secret, and commits the output.
+
+### The measured test
 
 Other limits, also listed on the method page:
 
@@ -145,20 +222,27 @@ The mirrors are fine for a prototype and a liability for a business.
 
 ## Business model
 
-Free now: everything above. The pricing page describes two paid plans and collects a
-waitlist; neither plan is built.
+Free now: everything above, with the simulated tests limited to a few runs a day per
+visitor. The pricing page describes two paid plans and collects a waitlist; neither
+plan is built.
 
-- **Launch pass, $39 per launch:** an alert when a similar product launches before you,
-  a launch-day pace line against the day's bar, private reports, daily data.
+- **Launch pass, $39 per launch:** larger panels on several boards, your own personas,
+  tagline variants through the panel side by side, an alert when a similar product
+  launches first, private results.
 - **Studio, $149 a month:** for agencies and launch consultants. Client workspaces,
-  white-label reports, API without rate limits, a weekly brief.
+  scheduled buyer-agent tests against named competitors, scheduled interviews of a
+  production agent, white-label reports, API without run limits.
 
 ## Not built
 
 - Payments and accounts. The waitlist only records an email and a plan.
 - Scheduled data refresh. `npm run ingest` is manual, and the result has to be committed.
 - The paid features listed above.
-- A database. Nothing needs one yet: reports are stateless and the waitlist is a file or a webhook.
+- Testing an agent at a URL. Your agent can sit the interview by calling Windtunnel
+  over MCP or the JSON API; Windtunnel does not call out to an agent endpoint you
+  supply. Doing that safely needs address pinning and somewhere to hold your agent's
+  credentials, and it would let the site post generated text at arbitrary hosts.
+- Accounts. Results are reachable by anyone with the link.
 
 ## Layout
 
@@ -166,9 +250,13 @@ waitlist; neither plan is built.
 api/index.js             Vercel entry point
 bin/windtunnel.js        CLI entry: serve, mcp, test, compare, bar, eval
 src/engine/              text matching, statistics, patterns, model, analysis
+src/sim/                 simulated tests: model layer, personas, panel, buyer agents,
+                         interview, budget, key-value store
 src/server/              Express app, HTML views, share links, waitlist
 src/mcp/server.js        MCP tools
 scripts/ingest.mjs       dataset builder
+scripts/eval-panel.mjs   backtest of the audience panel against real boards
+scripts/live-smoke.mjs   runs every simulated test once on the real model
 data/                    launches.json and the hand back-translations
 public/                  stylesheet, client script, favicon
 test/                    node:test suites and ingest fixtures

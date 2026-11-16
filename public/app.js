@@ -103,3 +103,22 @@ for (const body of document.querySelectorAll('[data-linechart]')) {
     show(at);
   });
 }
+
+// Slow forms (simulated runs take around 20 seconds): show that work has started,
+// and stop a second click from starting a second paid run.
+for (const form of document.querySelectorAll('form[data-busy]')) {
+  form.addEventListener('submit', () => {
+    const button = form.querySelector('button[type="submit"]');
+    if (!button || button.disabled) return;
+    // Disable after the browser has collected the form data.
+    setTimeout(() => {
+      button.disabled = true;
+      button.textContent = `${form.dataset.busy}\u2026`;
+    }, 0);
+  });
+}
+
+// Interview rehearsals advance on their own; the button remains for when script is off.
+for (const form of document.querySelectorAll('form[data-autosubmit]')) {
+  setTimeout(() => form.requestSubmit(), 900);
+}

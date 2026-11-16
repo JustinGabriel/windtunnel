@@ -7,25 +7,35 @@ import { fileURLToPath } from 'node:url';
 import { analyzePitch, backtest, compareVariants } from '../engine/analyze.js';
 import { loadCorpus, publicDoc } from '../engine/corpus.js';
 import { sharedTerms } from '../engine/text.js';
+import { existsSync, readFileSync } from 'node:fs';
 import { createMcpServer } from '../mcp/server.js';
+import { createSim } from '../sim/index.js';
+import { ModelConfigError } from '../sim/llm.js';
 import { decodeShare, encodeShare } from './share.js';
+import * as simViews from './sim-views.js';
 import { createWaitlist } from './store.js';
 import * as views from './views.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /**
- * @param {{corpus?: import('../engine/corpus.js').Corpus, dataDir?: string, rateLimit?: number, waitlist?: object}} [options]
+ * @param {{corpus?: import('../engine/corpus.js').Corpus, dataDir?: string, rateLimit?: number, waitlist?: object, sim?: object}} [options]
  */
 export function createApp(options = {}) {
   const corpus = options.corpus ?? loadCorpus();
   const waitlist = options.waitlist ?? createWaitlist({ dir: options.dataDir ?? process.env.WINDTUNNEL_DATA ?? join(ROOT, 'var') });
   const limiter = rateLimiter(options.rateLimit ?? 40);
+  const dataDir = options.dataDir ?? process.env.WINDTUNNEL_DATA ?? join(ROOT, 'var');
+  const sim = options.sim ?? createSim({ corpus, dataDir });
+  const evalPath = join(ROOT, 'data/panel-eval.json');
+  const panelEval = existsSync(evalPath) ? JSON.parse(readFileSync(evalPath, 'utf8')) : null;
   // The backtest is deterministic but takes about a second, so run it on first use:
   // API and MCP calls on a cold serverless instance should not wait for it.
   let bt;
   const ctx = {
     corpus,
+    sim: sim.status,
+    panelEval,
     waitlistOpen: waitlist.open,
     get backtest() {
       return (bt ??= backtest(corpus));
@@ -83,6 +93,85 @@ export function createApp(options = {}) {
     page(res, views.comparison(ctx, compareVariants(corpus, input), { url: `${origin(req)}/c/${req.params.token}` }));
   });
 
+  // ---- simulated tests ----------------------------------------------------------------
+
+  const pitchOf = (source) => pick(source, ['name', 'tagline', 'description']);
+  const visitor = (req) => ({ visitor: req.ip });
+  /** Limit and availability errors re-render the form with the reason; anything else propagates. */
+  const simFailure = (err) => (err instanceof ModelConfigError ? { status: 503, message: 'Simulations are misconfigured on this deployment. The measured tests still work.' } : err.status ? { status: err.status, message: err.message } : null);
+
+  app.get('/panel', (req, res) => page(res, simViews.panelPage(ctx, { prefill: pitchOf(req.query) })));
+  app.post('/panel', limiter, async (req, res) => {
+    const input = pitchOf(req.body);
+    if (!input.tagline?.trim()) return page(res, simViews.panelPage(ctx, { prefill: input, error: 'Enter a tagline to test.' }), 400);
+    try {
+      const result = await sim.panel(input, visitor(req));
+      res.redirect(303, `/p/${result.id}`);
+    } catch (err) {
+      const failure = simFailure(err);
+      if (!failure) throw err;
+      if (err instanceof ModelConfigError) console.error(err);
+      page(res, simViews.panelPage(ctx, { prefill: input, error: failure.message }), failure.status);
+    }
+  });
+  app.get('/p/:id', async (req, res) => {
+    const result = sim.status.enabled ? await sim.getPanel(req.params.id) : null;
+    if (!result) return page(res, views.notFound(), 404);
+    page(res, simViews.panelResult(ctx, result, { url: `${origin(req)}/p/${result.id}` }));
+  });
+
+  app.get('/buyers', (req, res) => page(res, simViews.buyersPage(ctx, { prefill: { ...pitchOf(req.query), ...pick(req.query, ['facts']) } })));
+  app.post('/buyers', limiter, async (req, res) => {
+    const input = pitchOf(req.body);
+    if (!input.tagline?.trim()) return page(res, simViews.buyersPage(ctx, { prefill: input, error: 'Enter a tagline to test.' }), 400);
+    try {
+      const result = await sim.buyers(input, visitor(req));
+      res.redirect(303, `/b/${result.id}`);
+    } catch (err) {
+      const failure = simFailure(err);
+      if (!failure) throw err;
+      if (err instanceof ModelConfigError) console.error(err);
+      page(res, simViews.buyersPage(ctx, { prefill: input, error: failure.message }), failure.status);
+    }
+  });
+  app.get('/b/:id', async (req, res) => {
+    const result = sim.status.enabled ? await sim.getBuyers(req.params.id) : null;
+    if (!result) return page(res, views.notFound(), 404);
+    page(res, simViews.buyersResult(ctx, result, { url: `${origin(req)}/b/${result.id}` }));
+  });
+
+  app.post('/interview', limiter, async (req, res) => {
+    const input = { ...pitchOf(req.body), ...pick(req.body, ['facts']) };
+    if (!input.tagline?.trim()) return page(res, simViews.buyersPage(ctx, { prefill: input, interviewError: 'Enter a tagline to test.' }), 400);
+    if (!input.facts?.trim()) return page(res, simViews.buyersPage(ctx, { prefill: input, interviewError: 'Add a facts sheet: it is the only thing the stand-in seller may say.' }), 400);
+    try {
+      const session = await sim.startInterview({ pitch: pitchOf(input), facts: input.facts, mode: 'rehearsal' }, visitor(req));
+      res.redirect(303, `/i/${session.id}`);
+    } catch (err) {
+      const failure = simFailure(err);
+      if (!failure) throw err;
+      if (err instanceof ModelConfigError) console.error(err);
+      page(res, simViews.buyersPage(ctx, { prefill: input, interviewError: failure.message }), failure.status);
+    }
+  });
+  app.get('/i/:id', async (req, res) => {
+    const session = sim.status.enabled ? await sim.getInterview(req.params.id) : null;
+    if (!session) return page(res, views.notFound(), 404);
+    page(res, simViews.interviewPage(ctx, session, { url: `${origin(req)}/i/${session.id}` }));
+  });
+  app.post('/i/:id/next', limiter, async (req, res) => {
+    try {
+      const session = await sim.rehearsalTurn(req.params.id, visitor(req));
+      if (!session) return page(res, views.notFound(), 404);
+      res.redirect(303, `/i/${session.id}`);
+    } catch (err) {
+      const failure = simFailure(err);
+      const session = failure && sim.status.enabled ? await sim.getInterview(req.params.id) : null;
+      if (!session) throw err;
+      page(res, simViews.interviewPage(ctx, session, { url: `${origin(req)}/i/${session.id}`, error: failure.message }), failure.status);
+    }
+  });
+
   app.get('/trends', (req, res) => page(res, views.trends(ctx)));
   app.get('/method', (req, res) => page(res, views.method(ctx)));
   app.get('/agents', (req, res) => page(res, views.agents(ctx, { origin: origin(req) })));
@@ -126,14 +215,33 @@ export function createApp(options = {}) {
       topLaunches: [...corpus.all].sort((a, b) => b.votes - a.votes).slice(0, 50).map(publicDoc),
     }),
   );
-  api.get('/backtest', (req, res) => res.json(ctx.backtest));
+  api.get('/backtest', (req, res) => res.json({ ...ctx.backtest, panel: panelEval }));
+
+  // Simulated tests. Each returns the stored result with a link to its page.
+  const withUrl = (req, path, doc) => ({ ...doc, url: `${origin(req)}/${path}/${doc.id}` });
+  api.post('/panel', limiter, async (req, res) => res.json(withUrl(req, 'p', await sim.panel(pitchOf(req.body), visitor(req)))));
+  api.post('/buyers', limiter, async (req, res) => res.json(withUrl(req, 'b', await sim.buyers(pitchOf(req.body), visitor(req)))));
+  api.post('/interview', limiter, async (req, res) => {
+    const mode = req.body?.mode === 'rehearsal' ? 'rehearsal' : 'external';
+    res.json(withUrl(req, 'i', await sim.startInterview({ pitch: pitchOf(req.body), facts: req.body?.facts, mode }, visitor(req))));
+  });
+  api.post('/interview/:id/reply', limiter, async (req, res) => {
+    const session = await sim.reply(req.params.id, String(req.body?.message ?? ''), visitor(req));
+    if (!session) return res.status(404).json({ error: 'No such interview, or it is a rehearsal.' });
+    res.json(withUrl(req, 'i', session));
+  });
+  api.post('/interview/:id/next', limiter, async (req, res) => {
+    const session = await sim.rehearsalTurn(req.params.id, visitor(req));
+    if (!session) return res.status(404).json({ error: 'No such rehearsal.' });
+    res.json(withUrl(req, 'i', session));
+  });
   api.use((req, res) => res.status(404).json({ error: 'No such endpoint. See /agents for the API.' }));
   app.use('/api', api);
 
   // ---- MCP (stateless streamable HTTP: a fresh server per request) ---------------------
 
   app.post('/mcp', limiter, async (req, res) => {
-    const server = createMcpServer(corpus);
+    const server = createMcpServer(corpus, { sim, visitor: req.ip, origin: origin(req) });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
       transport.close();
@@ -148,16 +256,18 @@ export function createApp(options = {}) {
 
   // ---- machine-readable odds and ends ---------------------------------------------------
 
-  app.get('/healthz', (req, res) => res.json({ ok: true, launches: corpus.all.length, window: [corpus.meta.from, corpus.meta.to], waitlist: waitlist.mode }));
+  app.get('/healthz', (req, res) => res.json({ ok: true, launches: corpus.all.length, window: [corpus.meta.from, corpus.meta.to], waitlist: waitlist.mode, simulations: sim.status.enabled ? { enabled: true, model: sim.status.model, store: sim.status.store } : { enabled: false, reason: sim.status.reason } }));
   app.get('/robots.txt', (req, res) => res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /r/\nDisallow: /c/\n`));
   app.get('/llms.txt', (req, res) => res.type('text/plain').send(views.llmsTxt(ctx, origin(req))));
 
   app.use((req, res) => page(res, views.notFound(), 404));
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    const status = err.status ?? (err.message === 'A tagline is required.' || err.message === 'Give at least one tagline.' ? 400 : 500);
-    if (status >= 500) console.error(err);
-    const message = status >= 500 ? 'Something went wrong on our side.' : err.message;
+    const config = err instanceof ModelConfigError;
+    const status = config ? 503 : (err.status ?? (err.message === 'A tagline is required.' || err.message === 'Give at least one tagline.' ? 400 : 500));
+    if (status >= 500 && (config || !err.status)) console.error(err);
+    // Errors that carry their own status were written for the person reading them.
+    const message = config ? 'Simulations are misconfigured on this deployment.' : status >= 500 && !err.status ? 'Something went wrong on our side.' : err.message;
     if (req.originalUrl.startsWith('/api') || req.originalUrl.startsWith('/mcp')) return res.status(status).json({ error: message });
     page(res, views.errorPage(message), status);
   });

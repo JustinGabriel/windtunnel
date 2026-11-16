@@ -3,11 +3,16 @@
   "framework": null,
   "buildCommand": "",
   "outputDirectory": "public",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ],
   "functions": {
     "api/index.js": {
-      "includeFiles": "data/launches.json",
-      "maxDuration": 30
+      "includeFiles": "data/*.json",
+      "maxDuration": 60
     }
   }
 }

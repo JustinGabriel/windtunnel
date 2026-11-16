@@ -1,7 +1,7 @@
 {
   "name": "windtunnel",
-  "version": "0.1.0",
-  "description": "Test your launch positioning against real Product Hunt outcomes before launch day. Web app, CLI and MCP server.",
+  "version": "0.2.0",
+  "description": "Test a Product Hunt launch on the market, on a simulated audience and on simulated buyer agents. Web app, CLI and MCP server.",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -15,9 +15,12 @@
     "mcp": "node bin/windtunnel.js mcp",
     "test": "node --test",
     "eval": "node bin/windtunnel.js eval",
-    "ingest": "node scripts/ingest.mjs"
+    "ingest": "node scripts/ingest.mjs",
+    "eval:panel": "node scripts/eval-panel.mjs",
+    "smoke:live": "node scripts/live-smoke.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "express": "^5.2.1",
     "zod": "^4.6.7"

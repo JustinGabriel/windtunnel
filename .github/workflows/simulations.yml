@@ -1,0 +1,80 @@
+# Runs the simulated tests against the real model, because that needs a key and
+# should not need anyone's laptop. Results are committed back to the branch.
+#
+# Trigger: change .github/sim-run.txt so its first word is one of
+#   smoke          every simulated test once, on three example pitches
+#   eval-dev       panel backtest on the tuning days (prints, writes nothing)
+#   eval-heldout   panel backtest on the held-out days; writes data/panel-eval.json
+# or run it by hand from the Actions tab.
+#
+# Needs the repository secret ANTHROPIC_API_KEY.
+
+name: Simulations
+
+on:
+  push:
+    paths:
+      - .github/sim-run.txt
+  workflow_dispatch:
+    inputs:
+      job:
+        description: What to run
+        type: choice
+        options: [smoke, eval-dev, eval-heldout]
+        default: smoke
+
+permissions:
+  contents: write
+
+concurrency:
+  group: simulations-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Choose the job
+        id: pick
+        env:
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          job="$INPUT_JOB"
+          if [ -z "$job" ]; then job="$(head -n 1 .github/sim-run.txt | cut -d' ' -f1)"; fi
+          case "$job" in
+            smoke|eval-dev|eval-heldout) echo "job=$job" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Nothing to run for '$job'."; echo "job=none" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Run
+        if: steps.pick.outputs.job != 'none'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JOB: ${{ steps.pick.outputs.job }}
+        run: |
+          set -o pipefail
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "Add the repository secret ANTHROPIC_API_KEY."; exit 1; fi
+          mkdir -p data/runs
+          case "$JOB" in
+            smoke) node scripts/live-smoke.mjs 2>&1 | tee data/runs/smoke.log ;;
+            eval-dev) node scripts/eval-panel.mjs --set dev 2>&1 | tee data/runs/eval-dev.log ;;
+            eval-heldout) node scripts/eval-panel.mjs --set heldout --write 2>&1 | tee data/runs/eval-heldout.log ;;
+          esac
+      - name: Commit the results
+        if: always() && steps.pick.outputs.job != 'none'
+        env:
+          JOB: ${{ steps.pick.outputs.job }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data/samples data/runs
+          if [ -f data/panel-eval.json ]; then git add data/panel-eval.json; fi
+          if git diff --cached --quiet; then echo "Nothing to commit."; exit 0; fi
+          git commit -m "Simulation run: $JOB [skip ci]"
+          git push

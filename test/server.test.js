@@ -202,7 +202,9 @@ test('the Vercel entry point exports the app as a request handler', async () => 
   assert.equal(typeof handler, 'function');
   const vercel = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
   assert.equal(vercel.rewrites[0].destination, '/api');
-  assert.match(vercel.functions['api/index.js'].includeFiles, /launches\.json/);
+  // The dataset and the published backtest both have to ship with the function.
+  assert.equal(vercel.functions['api/index.js'].includeFiles, 'data/*.json');
+  assert.ok(vercel.functions['api/index.js'].maxDuration >= 60, 'a panel run is about 25 model calls');
 });
 
 test('machine-readable endpoints', async () => {

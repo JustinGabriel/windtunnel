@@ -66,6 +66,26 @@ export class Corpus {
     });
     this.weekdays = this.#weekdayStats();
     this.model = fitModel(this.statDocs);
+
+    // Real boards, for showing a pitch among the launches of an actual day. Only
+    // launches whose wording came from the English digest: the hand-translated ones
+    // were picked for ranking high and would tilt any board they sat on.
+    this.byDate = new Map();
+    for (const d of this.statDocs) {
+      if (!this.byDate.has(d.date)) this.byDate.set(d.date, []);
+      this.byDate.get(d.date).push(d);
+    }
+    for (const list of this.byDate.values()) list.sort((x, y) => x.rank - y.rank);
+  }
+
+  /** English-text launches from one real day, best rank first. */
+  launchesOn(date) {
+    return this.byDate.get(date) ?? [];
+  }
+
+  /** Days with at least `min` English-text launches, oldest first. */
+  boardDates(min = 8) {
+    return [...this.byDate.entries()].filter(([, list]) => list.length >= min).map(([date]) => date).sort();
   }
 
   /** Theme and framing indicators for a pitch that is not in the corpus. */
